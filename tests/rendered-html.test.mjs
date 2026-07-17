@@ -75,6 +75,8 @@ test("ships local data and both deployment targets", async () => {
   assert.equal(JSON.parse(exhibitors).count, 963);
   assert.ok(JSON.parse(forums).length >= 70);
   assert.match(pagesIndex, /WAIC 接洽雷达/);
+  assert.match(pagesIndex, /企业接洽决策助手/);
+  assert.doesNotMatch(pagesIndex, /内容生成器/);
 
   await access(new URL("../public/og.png", import.meta.url));
   await access(new URL("../.github/workflows/pages.yml", import.meta.url));
