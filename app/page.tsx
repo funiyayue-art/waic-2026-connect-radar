@@ -21,6 +21,20 @@ type ContactRecord = {
   nextStep: NextStep;
   updatedAt: string;
 };
+type BusinessProfile = {
+  name: string;
+  offer: string;
+  customers: string;
+  needs: string;
+  growth: string;
+};
+type RelationshipType =
+  | "潜在客户"
+  | "上游能力方"
+  | "联合方案伙伴"
+  | "渠道 / 生态"
+  | "竞合参照"
+  | "待建立关系";
 
 const GOALS: Goal[] = ["采购/合作", "投资/产业", "媒体/研究", "人才/求职"];
 const INTENT_OPTIONS: Array<{ label: Intent; goal: Goal }> = [
@@ -51,6 +65,82 @@ const INTERESTS = [
   "自动驾驶",
   "数据基础设施",
 ];
+const EMPTY_PROFILE: BusinessProfile = {
+  name: "",
+  offer: "",
+  customers: "",
+  needs: "",
+  growth: "",
+};
+const TRAINING_DEMO_PROFILE: BusinessProfile = {
+  name: "示例：AI 企业培训服务商",
+  offer: "AI 企业培训、员工 AI 能力提升、智能体业务落地辅导",
+  customers: "需要数字化转型、员工 AI 培训和组织提效的中大型企业",
+  needs: "大模型与智能体平台、企业客户渠道、联合交付伙伴",
+  growth: "制造、金融、教育、人力资源与企业服务场景",
+};
+const SEMANTIC_THEMES = [
+  {
+    id: "training",
+    label: "培训与人才",
+    terms: ["培训", "教育", "人才", "人力资源", "员工", "学习", "高校", "商学院", "课程"],
+  },
+  {
+    id: "model-agent",
+    label: "大模型与智能体",
+    terms: ["大模型", "智能体", "agent", "llm", "生成式ai", "ai助理", "ai助手"],
+  },
+  {
+    id: "enterprise",
+    label: "企业服务",
+    terms: ["企业服务", "企业级", "办公", "管理", "运营平台", "数字化转型", "协同", "saas"],
+  },
+  {
+    id: "data-cloud",
+    label: "数据与云",
+    terms: ["数据", "数据库", "云计算", "云服务", "知识库", "数据治理", "存储"],
+  },
+  {
+    id: "compute-chip",
+    label: "算力与芯片",
+    terms: ["算力", "芯片", "处理器", "gpu", "推理", "计算基础设施", "risc"],
+  },
+  {
+    id: "robot",
+    label: "机器人与具身",
+    terms: ["机器人", "具身", "机械臂", "人形", "运动控制", "空间智能"],
+  },
+  {
+    id: "manufacturing",
+    label: "制造与工业",
+    terms: ["制造", "工业", "工厂", "生产", "供应链", "物流", "能源", "港口"],
+  },
+  {
+    id: "marketing-media",
+    label: "营销与内容",
+    terms: ["营销", "广告", "品牌", "媒体", "视频", "图像", "数字人", "内容"],
+  },
+  {
+    id: "finance",
+    label: "金融",
+    terms: ["金融", "银行", "保险", "证券", "财富管理", "风控"],
+  },
+  {
+    id: "healthcare",
+    label: "医疗健康",
+    terms: ["医疗", "健康", "医院", "药物", "生命科学", "诊断"],
+  },
+  {
+    id: "automotive",
+    label: "汽车与出行",
+    terms: ["汽车", "自动驾驶", "智驾", "车路", "座舱", "出行"],
+  },
+  {
+    id: "channel",
+    label: "产业渠道",
+    terms: ["园区", "协会", "商会", "产业平台", "招商", "孵化", "贸易推广", "企业出海"],
+  },
+] as const;
 
 const TOPIC_KEYWORDS: Record<string, string[]> = {
   大模型: ["大模型", "AGI", "LLM", "基座模型"],
@@ -84,7 +174,190 @@ function compactText(value: string, length = 54) {
   return text.length > length ? `${text.slice(0, length)}…` : text;
 }
 
-function scoreCompany(company: Exhibitor, goal: Goal, interests: string[]) {
+function hasBusinessProfile(profile: BusinessProfile) {
+  return [profile.offer, profile.customers, profile.needs, profile.growth].some(
+    (value) => value.trim().length >= 2,
+  );
+}
+
+function themeMatches(text: string) {
+  const normalized = text.toLowerCase();
+  return SEMANTIC_THEMES.filter((theme) =>
+    theme.terms.some((term) => normalized.includes(term)),
+  );
+}
+
+function overlapCount(left: Set<string>, right: Set<string>) {
+  let count = 0;
+  left.forEach((item) => {
+    if (right.has(item)) count += 1;
+  });
+  return count;
+}
+
+function joinedThemeLabels(ids: Set<string>) {
+  const labels = SEMANTIC_THEMES.filter((theme) => ids.has(theme.id)).map(
+    (theme) => theme.label,
+  );
+  return labels.slice(0, 3).join("、");
+}
+
+function relationshipFor(company: Exhibitor, profile: BusinessProfile) {
+  const profileReady = hasBusinessProfile(profile);
+  const companyCorpus =
+    `${company.company} ${company.industry} ${company.segment} ${company.business}`.toLowerCase();
+  const companyThemes = new Set(themeMatches(companyCorpus).map((theme) => theme.id));
+  const offerThemes = new Set(themeMatches(profile.offer).map((theme) => theme.id));
+  const customerThemes = new Set(
+    themeMatches(`${profile.customers} ${profile.growth}`).map((theme) => theme.id),
+  );
+  const needThemes = new Set(themeMatches(profile.needs).map((theme) => theme.id));
+
+  if (!profileReady) {
+    return {
+      type: "待建立关系" as RelationshipType,
+      confidence: "待录入画像",
+      rawScore: 0,
+      connection: "先录入你提供什么、服务谁和当前需要什么，才能判断这家展商与你的直接关系。",
+      opportunity: "当前仅能按赛道、公开业务与展位信息排序。",
+      whyVisit: `若你关注「${company.segment}」，可先用 10 分钟核验其真实交付与合作边界。`,
+      stopCondition: "如果与你的客户、能力缺口或增长方向均无交集，就不进入优先路线。",
+      evidence: `公开业务：${company.business}`,
+    };
+  }
+
+  const needOverlap = overlapCount(needThemes, companyThemes);
+  const customerOverlap = overlapCount(customerThemes, companyThemes);
+  const offerOverlap = overlapCount(offerThemes, companyThemes);
+  const profileHasTraining = offerThemes.has("training");
+  const enterpriseDemandSignal =
+    profileHasTraining &&
+    /(员工|人力资源|企业运营|智能办公|组织|数字化转型|企业级ai|企业服务)/i.test(
+      companyCorpus,
+    );
+  const institutionalChannel =
+    companyThemes.has("channel") ||
+    (company.industry === "机构与平台" &&
+      /(园区|协会|商会|孵化|招商|贸易|企业服务)/.test(companyCorpus));
+  const complementPairs = [
+    ["training", "model-agent"],
+    ["training", "enterprise"],
+    ["model-agent", "data-cloud"],
+    ["model-agent", "compute-chip"],
+    ["enterprise", "data-cloud"],
+    ["manufacturing", "robot"],
+    ["marketing-media", "model-agent"],
+    ["healthcare", "model-agent"],
+    ["automotive", "compute-chip"],
+  ];
+  const complementHits = complementPairs.filter(
+    ([left, right]) =>
+      (offerThemes.has(left) && companyThemes.has(right)) ||
+      (offerThemes.has(right) && companyThemes.has(left)),
+  ).length;
+
+  const candidates: Array<{ type: RelationshipType; score: number }> = [
+    {
+      type: "上游能力方",
+      score:
+        needOverlap * 13 +
+        (needThemes.has("model-agent") && companyThemes.has("model-agent") ? 8 : 0) +
+        (needThemes.has("data-cloud") && companyThemes.has("data-cloud") ? 6 : 0),
+    },
+    {
+      type: "潜在客户",
+      score:
+        customerOverlap * 8 +
+        (enterpriseDemandSignal ? 18 : 0) +
+        (profileHasTraining && companyThemes.has("training") ? 5 : 0),
+    },
+    {
+      type: "联合方案伙伴",
+      score:
+        Math.min(1, complementHits) * 14 +
+        Math.min(6, offerOverlap * 2) +
+        (companyThemes.has("enterprise") ? 2 : 0),
+    },
+    {
+      type: "渠道 / 生态",
+      score: institutionalChannel ? 30 + customerOverlap * 4 : 0,
+    },
+    {
+      type: "竞合参照",
+      score:
+        offerOverlap * 9 +
+        (profileHasTraining && companyThemes.has("training") ? 12 : 0) -
+        complementHits * 3,
+    },
+  ];
+  const best = candidates.sort((a, b) => b.score - a.score)[0];
+  const type = best.score >= 10 ? best.type : ("待建立关系" as RelationshipType);
+  const matchedIds = new Set(
+    [...companyThemes].filter(
+      (theme) =>
+        offerThemes.has(theme) || customerThemes.has(theme) || needThemes.has(theme),
+    ),
+  );
+  const matchedLabel = joinedThemeLabels(matchedIds) || company.segment;
+  const profileName = profile.name.trim() || "你的企业";
+
+  const copy: Record<
+    RelationshipType,
+    { connection: string; opportunity: string; whyVisit: string; stopCondition: string }
+  > = {
+    潜在客户: {
+      connection: `${profileName}提供「${compactText(profile.offer, 34)}」；对方公开业务出现「${matchedLabel}」及企业应用信号，可能存在内部培训或 AI 落地需求。`,
+      opportunity: `从对方正在推进的 ${company.segment} 场景切入，验证是否存在培训、组织赋能或专项落地服务采购。`,
+      whyVisit: "目标不是介绍你自己，而是确认谁负责 AI 推广、员工采用率和配套培训预算。",
+      stopCondition: "若对方没有组织推广任务、明确负责人或近期落地计划，就暂不进入销售跟进。",
+    },
+    上游能力方: {
+      connection: `${profileName}当前需要「${compactText(profile.needs, 34)}」；对方公开能力覆盖「${matchedLabel}」，可能补齐你的产品或交付底座。`,
+      opportunity: `评估其 ${company.segment} 能否作为供应能力、接口底座或联合交付资源。`,
+      whyVisit: "必须拿到产品边界、接口方式、合作门槛和最小验证周期四个答案。",
+      stopCondition: "若不开放接口、不能提供企业案例或最小合作成本超出可承受范围，就停止推进。",
+    },
+    联合方案伙伴: {
+      connection: `${profileName}的「${compactText(profile.offer, 30)}」与对方的「${matchedLabel}」具有互补性，可能组合成面向 ${compactText(profile.customers || profile.growth, 30)} 的方案。`,
+      opportunity: `尝试形成“对方产品能力＋你的行业服务/落地能力”的联合方案或联合获客。`,
+      whyVisit: "重点确认双方客户是否重叠、谁负责售前与交付，以及收入如何分配。",
+      stopCondition: "若客户重叠但能力不互补，或双方都只想让对方带单，就不作为优先伙伴。",
+    },
+    "渠道 / 生态": {
+      connection: `${profileName}希望拓展「${compactText(profile.growth || profile.customers, 34)}」；对方具有园区、协会、孵化或企业服务网络，可能提供批量触达入口。`,
+      opportunity: "通过活动、会员企业、园区项目或联合服务包接触目标客户。",
+      whyVisit: "要确认它能触达哪类企业、是否有固定活动机制，以及谁能推进下一次联合对接。",
+      stopCondition: "若只能提供泛曝光、没有可触达企业名单或后续负责人，就不投入跟进。",
+    },
+    竞合参照: {
+      connection: `${profileName}与对方都覆盖「${matchedLabel}」，既可能存在直接竞争，也可能在客户、内容或交付能力上互补。`,
+      opportunity: "用其产品结构、客户定位和交付方式校准自己的差异化，并寻找可合作的空白环节。",
+      whyVisit: "不要泛聊趋势，直接比较目标客户、收费方式、交付边界和可替代性。",
+      stopCondition: "若双方高度同质且没有区域、渠道或能力互补，就只做竞品记录，不进入合作路线。",
+    },
+    待建立关系: {
+      connection: `现有字段只能确认对方在做「${company.segment}」，暂未找到它与 ${profileName} 的直接上下游连接。`,
+      opportunity: "先作为行业观察对象，不占用核心接洽时段。",
+      whyVisit: "只有当其现场展示出现与你客户或能力缺口相关的新证据时，再临时加入。",
+      stopCondition: "若 3 分钟内仍无法说清双方交换什么价值，就直接跳过。",
+    },
+  };
+
+  return {
+    type,
+    confidence: best.score >= 28 ? "高关联" : best.score >= 16 ? "中关联" : "弱关联",
+    rawScore: Math.max(0, best.score),
+    ...copy[type],
+    evidence: `资料依据：${company.business}；关系命中：${matchedLabel}`,
+  };
+}
+
+function scoreCompany(
+  company: Exhibitor,
+  goal: Goal,
+  interests: string[],
+  profile: BusinessProfile,
+) {
   const corpus = [
     company.company,
     company.industry,
@@ -94,40 +367,7 @@ function scoreCompany(company: Exhibitor, goal: Goal, interests: string[]) {
     company.financing,
   ].join(" ");
 
-  const product = isUnknown(company.business)
-    ? 5
-    : company.business.length > 42
-      ? 20
-      : company.business.length > 22
-        ? 17
-        : 12;
-
-  const maturity = /已上市|IPO|港股|A股|科创板/.test(company.financing)
-    ? 20
-    : /C轮|D轮|战略融资|B\+?轮|数十亿|数亿美元/.test(company.financing)
-      ? 17
-      : /A轮|Pre-A|天使轮|种子轮/.test(company.financing)
-        ? 12
-        : isUnknown(company.financing)
-          ? 5
-          : 10;
-
-  const capital = isUnknown(company.investors)
-    ? 4
-    : /国资|阿里|腾讯|红杉|IDG|高瓴|启明|顺为|联想|华为/.test(
-          company.investors,
-        )
-      ? 15
-      : 11;
-
-  const completeness = [
-    company.business,
-    company.investors,
-    company.financing,
-    company.location,
-  ].filter((value) => !isUnknown(value)).length;
-  const evidence = 6 + completeness * 2;
-  const access = company.booth ? 10 : 4;
+  const relationship = relationshipFor(company, profile);
 
   const chosen = interests.length ? interests : [company.industry, company.segment];
   const keywordHits = chosen.reduce((total, interest) => {
@@ -135,16 +375,32 @@ function scoreCompany(company: Exhibitor, goal: Goal, interests: string[]) {
     return total + (keywords.some((keyword) => corpus.includes(keyword)) ? 1 : 0);
   }, 0);
 
-  const goalBonus =
+  const relationshipScore = hasBusinessProfile(profile)
+    ? Math.min(40, Math.max(4, relationship.rawScore))
+    : Math.min(40, 8 + keywordHits * 5);
+  const objectiveBonus =
     goal === "投资/产业"
-      ? Math.round((maturity + capital) / 6)
+      ? !isUnknown(company.financing)
+        ? 7
+        : 3
       : goal === "采购/合作"
-        ? Math.round(product / 3)
+        ? relationship.type === "上游能力方" ||
+          relationship.type === "联合方案伙伴" ||
+          relationship.type === "潜在客户"
+          ? 8
+          : 3
         : goal === "媒体/研究"
-          ? Math.min(7, Math.round(corpus.length / 90))
-          : Math.min(7, maturity > 10 ? 6 : 3);
-  const fit = Math.min(20, 7 + keywordHits * 4 + goalBonus);
-  const total = Math.min(100, product + maturity + capital + evidence + access + fit);
+          ? 6
+          : /人才|教育|培训/.test(corpus)
+            ? 7
+            : 3;
+  const objective = Math.min(25, 7 + keywordHits * 4 + objectiveBonus);
+  const evidence =
+    (isUnknown(company.business) ? 3 : 10) +
+    (isUnknown(company.investors) ? 2 : 5) +
+    (isUnknown(company.financing) ? 1 : 5);
+  const route = company.booth && company.venue ? 15 : company.venue ? 9 : 3;
+  const total = Math.min(100, relationshipScore + objective + evidence + route);
 
   const verdict =
     total >= 78
@@ -155,22 +411,17 @@ function scoreCompany(company: Exhibitor, goal: Goal, interests: string[]) {
   const action: Decision = total >= 78 ? "联系" : total >= 62 ? "观察" : "跳过";
 
   const strengths = [
-    !isUnknown(company.business)
-      ? `产品/业务指向明确：${company.business}`
-      : "业务信息仍需现场补证",
-    !isUnknown(company.financing)
-      ? `资本阶段信号：${company.financing}`
-      : "融资阶段未披露，需核验经营成熟度",
-    company.booth ? `现场触达成本低：${company.venue} ${company.booth}` : "展位信息待确认",
+    relationship.connection,
+    `为什么去：${relationship.whyVisit}`,
+    `可能机会：${relationship.opportunity}`,
+    company.booth ? `位置明确：${company.venue} ${company.booth}` : "展位信息待确认",
   ];
 
   const risks = [
-    isUnknown(company.investors) && "缺少股东/投资方验证信号",
-    isUnknown(company.financing) && "缺少融资或经营阶段信息",
+    relationship.stopCondition,
+    isUnknown(company.business) && "主营业务字段不完整，关系判断可信度较低",
     /大模型|机器人|智能体/.test(company.industry + company.segment) &&
       "热门赛道同质化高，要追问真实客户与交付边界",
-    /已上市/.test(company.financing) &&
-      "资本成熟不等于合作匹配，仍需核对预算、接口与决策链",
   ].filter(Boolean) as string[];
 
   return {
@@ -179,23 +430,36 @@ function scoreCompany(company: Exhibitor, goal: Goal, interests: string[]) {
     action,
     strengths,
     risks: risks.length ? risks : ["现有公开字段完整，但关键经营数据仍需现场核验"],
+    relationship,
     breakdown: [
-      { label: "产品清晰度", value: product, max: 20 },
-      { label: "阶段成熟度", value: maturity, max: 20 },
-      { label: "资本验证", value: capital, max: 15 },
-      { label: "证据完整度", value: evidence, max: 14 },
-      { label: "现场可达性", value: access, max: 10 },
-      { label: "目标匹配", value: fit, max: 20 },
+      { label: "与你的关系", value: relationshipScore, max: 40 },
+      { label: "本次目标", value: objective, max: 25 },
+      { label: "证据可信度", value: evidence, max: 20 },
+      { label: "路线效率", value: route, max: 15 },
     ],
   };
 }
 
-function meetingQuestions(company: Exhibitor, goal: Goal) {
+function meetingQuestions(
+  company: Exhibitor,
+  goal: Goal,
+  profile: BusinessProfile,
+  relationship: ReturnType<typeof relationshipFor>,
+) {
   const product = company.segment || company.industry || "核心产品";
+  const relationQuestion: Record<RelationshipType, string> = {
+    潜在客户: `你们内部谁在负责「${compactText(profile.offer || "AI 落地", 22)}」，今年有明确的推广目标和预算吗？`,
+    上游能力方: `针对我们需要的「${compactText(profile.needs || product, 22)}」，你们能提供到哪一层产品、接口和交付支持？`,
+    联合方案伙伴: `如果把你们的「${product}」与我们的「${compactText(profile.offer || "行业服务", 20)}」组成联合方案，双方各自负责什么？`,
+    "渠道 / 生态": `你们能稳定触达哪些「${compactText(profile.customers || profile.growth || "目标企业", 22)}」，通过什么活动或项目机制对接？`,
+    竞合参照: `你们在「${product}」上的目标客户、收费方式和交付边界分别是什么？`,
+    待建立关系: `你们在「${product}」里最希望与哪类企业交换什么资源？`,
+  };
   const common = [
-    `你们在「${product}」里已经规模化交付的客户场景是什么？`,
+    relationQuestion[relationship.type],
+    `你们已经规模化交付的客户场景是什么，能否提供一个可核验案例？`,
     "能否给出一个可验证的效果指标：成本、准确率、时延或转化率？",
-    "从试点到正式采购，最常卡在哪个接口、数据或组织环节？",
+    `如果从 ${company.venue} 的这次交流继续，下一步由谁在什么时间内推进？`,
   ];
   const tailored: Record<Goal, string[]> = {
     "采购/合作": [
@@ -291,7 +555,7 @@ function buildContent(
   goal: Goal,
 ) {
   const name = companyName(company.company);
-  const reason = score.strengths[0].replace("产品/业务指向明确：", "");
+  const reason = score.relationship.connection;
   const risk = score.risks[0];
   const session = forums[0]
     ? `${formatDate(forums[0].date)} ${forums[0].start}「${forums[0].name}」`
@@ -302,8 +566,15 @@ function buildContent(
 
 判断：${score.verdict}｜${score.total}/100
 目标：${goal}
+关系：${score.relationship.type}｜${score.relationship.confidence}
 位置：${company.venue} ${company.booth}
 赛道：${company.industry} / ${company.segment}
+
+为什么值得拜访
+${score.relationship.whyVisit}
+
+可能形成的机会
+${score.relationship.opportunity}
 
 已知证据
 1. 主营：${company.business}
@@ -326,13 +597,18 @@ ${session}
     return `# WAIC 2026 企业观察：${name}
 
 ## 先给结论
-${score.verdict}，接洽评分 ${score.total}/100。对「${goal}」读者来说，值得看的不是公司名气，而是它能否把 ${company.segment} 变成可验证的交付。
+${score.verdict}，接洽评分 ${score.total}/100。当前关系判断为「${score.relationship.type}」。值得看的不是公司名气，而是双方能否交换具体价值。
 
-## 它在做什么
+## 它为什么与你有关
 ${reason}
 
-## 为什么值得停留
-展位在 ${company.venue} ${company.booth}。现有资本/阶段信号为：${company.financing}。这能说明资源与阶段，但不能替代客户、收入和交付证据。
+## 这次去要拿到什么答案
+${score.relationship.whyVisit}
+
+## 可能形成什么
+${score.relationship.opportunity}
+
+展位在 ${company.venue} ${company.booth}。融资与上市信息只说明资源和阶段，不代表与你的业务匹配。
 
 ## 还不能下结论的地方
 ${risk}
@@ -359,12 +635,16 @@ ${session}
 
 📍 ${company.venue} ${company.booth}
 🏷 ${company.industry}｜${company.segment}
+🔗 ${score.relationship.type}｜${score.relationship.confidence}
 
-它在做什么：
+它为什么与你有关：
 ${reason}
 
-为什么值得看：
-${score.strengths.slice(1).map((item) => `· ${item}`).join("\n")}
+为什么值得专程去：
+· ${score.relationship.whyVisit}
+
+可能形成什么：
+· ${score.relationship.opportunity}
 
 但别急着被热词说服：
 · ${risk}
@@ -393,6 +673,10 @@ export default function Home() {
   const [selectedId, setSelectedId] = useState(exhibitors[0].id);
   const [intent, setIntent] = useState<Intent>("找合作伙伴");
   const [goal, setGoal] = useState<Goal>("采购/合作");
+  const [businessProfile, setBusinessProfile] =
+    useState<BusinessProfile>(EMPTY_PROFILE);
+  const [profileDraft, setProfileDraft] =
+    useState<BusinessProfile>(EMPTY_PROFILE);
   const [interests, setInterests] = useState<string[]>(["智能体", "企业服务"]);
   const [timeBudget, setTimeBudget] = useState<TimeBudget>("2小时");
   const [planGenerated, setPlanGenerated] = useState(false);
@@ -437,14 +721,14 @@ export default function Home() {
       filtered
         .map((company) => ({
           company,
-          companyScore: scoreCompany(company, goal, interests),
+          companyScore: scoreCompany(company, goal, interests, businessProfile),
         }))
         .sort(
           (a, b) =>
             b.companyScore.total - a.companyScore.total ||
             a.company.id - b.company.id,
         ),
-    [filtered, goal, interests],
+    [filtered, goal, interests, businessProfile],
   );
 
   const rankedCompanies = useMemo(
@@ -452,27 +736,36 @@ export default function Home() {
       exhibitors
         .map((company) => ({
           company,
-          companyScore: scoreCompany(company, goal, interests),
+          companyScore: scoreCompany(company, goal, interests, businessProfile),
         }))
         .sort(
           (a, b) =>
             b.companyScore.total - a.companyScore.total ||
             a.company.id - b.company.id,
         ),
-    [exhibitors, goal, interests],
+    [exhibitors, goal, interests, businessProfile],
   );
 
   const featuredCompanies = useMemo(() => {
     const picked: typeof rankedCompanies = [];
     const usedIndustries = new Set<string>();
+    const usedRelationships = new Set<RelationshipType>();
+    const profileReady = hasBusinessProfile(businessProfile);
     for (const entry of rankedCompanies) {
       if (usedIndustries.has(entry.company.industry)) continue;
+      if (
+        profileReady &&
+        usedRelationships.has(entry.companyScore.relationship.type)
+      ) {
+        continue;
+      }
       picked.push(entry);
       usedIndustries.add(entry.company.industry);
+      usedRelationships.add(entry.companyScore.relationship.type);
       if (picked.length === 3) break;
     }
     return picked;
-  }, [rankedCompanies]);
+  }, [rankedCompanies, businessProfile]);
 
   const topRecommendations = rankedCompanies.slice(0, 10);
   const routeGroups = useMemo(() => {
@@ -488,12 +781,18 @@ export default function Home() {
   const selected =
     exhibitors.find((item) => item.id === selectedId) ?? exhibitors[0];
   const score = useMemo(
-    () => scoreCompany(selected, goal, interests),
-    [selected, goal, interests],
+    () => scoreCompany(selected, goal, interests, businessProfile),
+    [selected, goal, interests, businessProfile],
   );
   const questions = useMemo(
-    () => meetingQuestions(selected, goal),
-    [selected, goal],
+    () =>
+      meetingQuestions(
+        selected,
+        goal,
+        businessProfile,
+        score.relationship,
+      ),
+    [selected, goal, businessProfile, score.relationship],
   );
   const matchedForums = useMemo(
     () => matchForums(selected, interests),
@@ -521,10 +820,16 @@ export default function Home() {
     const savedCompanies = window.localStorage.getItem("waic-saved-companies");
     const savedStatuses = window.localStorage.getItem("waic-contact-statuses");
     const savedRecords = window.localStorage.getItem("waic-contact-records");
+    const savedProfile = window.localStorage.getItem("waic-business-profile");
     try {
       if (savedCompanies) setSavedCompanyIds(JSON.parse(savedCompanies));
       if (savedStatuses) setContactStatuses(JSON.parse(savedStatuses));
       if (savedRecords) setContactRecords(JSON.parse(savedRecords));
+      if (savedProfile) {
+        const parsedProfile = JSON.parse(savedProfile) as BusinessProfile;
+        setBusinessProfile(parsedProfile);
+        setProfileDraft(parsedProfile);
+      }
     } catch {
       // Ignore malformed local data.
     }
@@ -556,6 +861,36 @@ export default function Home() {
   function chooseIntent(option: (typeof INTENT_OPTIONS)[number]) {
     setIntent(option.label);
     setGoal(option.goal);
+  }
+
+  function updateProfileField(field: keyof BusinessProfile, value: string) {
+    setProfileDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  function saveBusinessProfile(profile = profileDraft) {
+    const normalized = Object.fromEntries(
+      Object.entries(profile).map(([key, value]) => [key, value.trim()]),
+    ) as BusinessProfile;
+    setBusinessProfile(normalized);
+    setProfileDraft(normalized);
+    setPlanGenerated(false);
+    window.localStorage.setItem(
+      "waic-business-profile",
+      JSON.stringify(normalized),
+    );
+    showToast(
+      hasBusinessProfile(normalized)
+        ? "企业画像已保存，推荐理由已重算"
+        : "企业画像已清空",
+    );
+  }
+
+  function loadTrainingDemo() {
+    saveBusinessProfile(TRAINING_DEMO_PROFILE);
+  }
+
+  function clearBusinessProfile() {
+    saveBusinessProfile(EMPTY_PROFILE);
   }
 
   function generatePlan() {
@@ -648,9 +983,14 @@ export default function Home() {
   function exportFeishuCsv() {
     const rows = [
       [
+        "我的企业",
+        "我方能力",
         "公司",
         "展位",
         "行业",
+        "关系类型",
+        "为什么拜访",
+        "可能机会",
         "细分领域",
         "判断",
         "评分",
@@ -662,9 +1002,14 @@ export default function Home() {
         "备注",
       ],
       [
+        businessProfile.name || "未命名企业",
+        businessProfile.offer,
         selected.company,
         `${selected.venue} ${selected.booth}`,
         selected.industry,
+        score.relationship.type,
+        score.relationship.whyVisit,
+        score.relationship.opportunity,
         selected.segment,
         savedDecision,
         score.total,
@@ -710,7 +1055,7 @@ export default function Home() {
             <span>现场做出接洽判断。</span>
           </h1>
           <p className="hero-lede">
-            从公司做什么、资本处在哪一段、还缺什么证据出发，生成一张能被读者真正使用的企业判断卡。
+            从你的企业提供什么、需要什么出发，判断谁是客户、上游、伙伴或竞合对象，并生成一张现场可验证的接洽卡。
           </p>
           <div className="hero-actions">
             <a className="primary-button" href="#personalize">
@@ -748,10 +1093,91 @@ export default function Home() {
         <div className="section-heading">
           <div>
             <p className="eyebrow">00 · BUILD MY DAY</p>
-            <h2>先说目标，再给你企业</h2>
+            <h2>先录企业，再说为什么见</h2>
           </div>
-          <p>三步生成个人接洽清单：优先企业、相关论坛，以及按展馆整理的现场路线。</p>
+          <p>推荐不再从“谁融资最多”出发，而是从你提供什么、需要什么，以及双方能交换什么价值出发。</p>
         </div>
+
+        <article
+          className={
+            hasBusinessProfile(businessProfile)
+              ? "profile-builder profile-ready"
+              : "profile-builder"
+          }
+        >
+          <div className="profile-builder-head">
+            <div>
+              <span>MY COMPANY · 本地保存</span>
+              <h3>我的企业画像</h3>
+              <p>输入业务关系所需的最少信息；不注册、不上传，内容只保存在当前浏览器。</p>
+            </div>
+            <div className="profile-status">
+              <i aria-hidden="true" />
+              {hasBusinessProfile(businessProfile) ? "已参与匹配" : "尚未录入"}
+            </div>
+          </div>
+
+          <div className="profile-fields">
+            <label className="profile-name-field">
+              <span>企业名称</span>
+              <input
+                onChange={(event) => updateProfileField("name", event.target.value)}
+                placeholder="例如：某某科技 / 可暂不填写"
+                value={profileDraft.name}
+              />
+            </label>
+            <label>
+              <span>我们提供什么</span>
+              <textarea
+                onChange={(event) => updateProfileField("offer", event.target.value)}
+                placeholder="产品、服务、核心能力"
+                value={profileDraft.offer}
+              />
+            </label>
+            <label>
+              <span>我们主要服务谁</span>
+              <textarea
+                onChange={(event) =>
+                  updateProfileField("customers", event.target.value)
+                }
+                placeholder="客户类型、行业、部门或使用者"
+                value={profileDraft.customers}
+              />
+            </label>
+            <label>
+              <span>当前需要补什么</span>
+              <textarea
+                onChange={(event) => updateProfileField("needs", event.target.value)}
+                placeholder="供应能力、渠道、技术、客户或伙伴"
+                value={profileDraft.needs}
+              />
+            </label>
+            <label>
+              <span>想拓展什么场景</span>
+              <textarea
+                onChange={(event) => updateProfileField("growth", event.target.value)}
+                placeholder="市场、行业、区域或新业务"
+                value={profileDraft.growth}
+              />
+            </label>
+          </div>
+
+          <div className="profile-actions">
+            <div>
+              <button className="profile-save-button" onClick={() => saveBusinessProfile()} type="button">
+                保存并重新匹配
+              </button>
+              <button onClick={loadTrainingDemo} type="button">
+                试用“AI 企业培训”样例
+              </button>
+            </div>
+            {hasBusinessProfile(businessProfile) && (
+              <button className="profile-clear-button" onClick={clearBusinessProfile} type="button">
+                清空画像
+              </button>
+            )}
+          </div>
+        </article>
 
         <div className="quick-steps">
           <article className="quick-step">
@@ -819,10 +1245,14 @@ export default function Home() {
         <div className="featured-zone" id="personal-plan">
           <div className="featured-heading">
             <div>
-              <span>首页主推</span>
+              <span>企业关系主推</span>
               <h3>今天先看这 3 家</h3>
             </div>
-            <p>分别来自不同的相关行业；推荐会随你的目标和关注方向实时变化。</p>
+            <p>
+              {hasBusinessProfile(businessProfile)
+                ? `以下结果已关联「${businessProfile.name || "我的企业"}」，并随目标实时重算。`
+                : "尚未录入企业画像，当前结果仅按目标和关注方向计算。"}
+            </p>
           </div>
           <div className="featured-grid">
             {featuredCompanies.map(({ company, companyScore }, index) => (
@@ -833,18 +1263,18 @@ export default function Home() {
                 type="button"
               >
                 <div className="featured-topline">
-                  <span>0{index + 1} · {company.industry}</span>
+                  <span>0{index + 1} · {companyScore.relationship.type}</span>
                   <b>{companyScore.total}<small>/100</small></b>
                 </div>
                 <h4>{companyName(company.company)}</h4>
-                <p>{compactText(companyScore.strengths[0], 62)}</p>
+                <p>{compactText(companyScore.relationship.connection, 90)}</p>
                 <div className="featured-reason">
-                  <span>推荐理由</span>
-                  <b>{compactText(companyScore.strengths[1], 44)}</b>
+                  <span>为什么去见</span>
+                  <b>{compactText(companyScore.relationship.whyVisit, 62)}</b>
                 </div>
                 <div className="featured-risk">
-                  <span>需确认</span>
-                  <p>{compactText(companyScore.risks[0], 48)}</p>
+                  <span>不成立就停止</span>
+                  <p>{compactText(companyScore.relationship.stopCondition, 62)}</p>
                 </div>
                 <i>查看判断 →</i>
               </button>
@@ -866,7 +1296,12 @@ export default function Home() {
                       <span>{String(index + 1).padStart(2, "0")}</span>
                       <div>
                         <b>{companyName(company.company)}</b>
-                        <small>{company.industry} · {company.venue} {company.booth}</small>
+                        <small>
+                          {companyScore.relationship.type} · {company.venue} {company.booth}
+                        </small>
+                        <span className="top-ten-why">
+                          {compactText(companyScore.relationship.whyVisit, 42)}
+                        </span>
                       </div>
                       <strong>{companyScore.total}</strong>
                     </button>
@@ -983,7 +1418,7 @@ export default function Home() {
             </select>
             <div className="result-meta">
               <span>显示 {filteredRanked.length} 家</span>
-              <span>已按接洽分排序</span>
+              <span>已按关系价值排序</span>
             </div>
             <div className="company-list">
               {filteredRanked.map(({ company, companyScore }) => (
@@ -1007,13 +1442,16 @@ export default function Home() {
                     <small>
                       {company.segment} · {company.booth}
                     </small>
+                    <span className="company-row-relation">
+                      {companyScore.relationship.type} · {companyScore.relationship.confidence}
+                    </span>
                     <span className="company-row-reason">
                       <i aria-hidden="true">＋</i>
-                      {compactText(companyScore.strengths[0], 42)}
+                      {compactText(companyScore.relationship.whyVisit, 48)}
                     </span>
                     <span className="company-row-risk">
                       <i aria-hidden="true">△</i>
-                      {compactText(companyScore.risks[0], 38)}
+                      {compactText(companyScore.relationship.stopCondition, 42)}
                     </span>
                   </span>
                 </button>
@@ -1030,6 +1468,7 @@ export default function Home() {
                 <div className="company-tags">
                   <span>{selected.industry}</span>
                   <span>{selected.location}</span>
+                  <span>{score.relationship.type}</span>
                 </div>
                 <h3>{companyName(selected.company)}</h3>
                 <p>{selected.company.split("/")[0].trim()}</p>
@@ -1042,7 +1481,7 @@ export default function Home() {
 
             <div className="verdict-strip">
               <div>
-                <span>当前判断</span>
+                <span>与你的企业关系判断</span>
                 <strong>{score.verdict}</strong>
               </div>
               <p>
@@ -1050,8 +1489,36 @@ export default function Home() {
               </p>
             </div>
 
+            <div className="relationship-card">
+              <div className="relationship-card-head">
+                <div>
+                  <span>RELATIONSHIP · {score.relationship.confidence}</span>
+                  <h4>{score.relationship.type}</h4>
+                </div>
+                <b>{businessProfile.name || "我的企业"} ↔ {companyName(selected.company)}</b>
+              </div>
+              <p className="relationship-connection">
+                {score.relationship.connection}
+              </p>
+              <div className="relationship-grid">
+                <div>
+                  <span>可能形成什么</span>
+                  <p>{score.relationship.opportunity}</p>
+                </div>
+                <div>
+                  <span>为什么值得去</span>
+                  <p>{score.relationship.whyVisit}</p>
+                </div>
+                <div>
+                  <span>不符合就停止</span>
+                  <p>{score.relationship.stopCondition}</p>
+                </div>
+              </div>
+              <small>{score.relationship.evidence}</small>
+            </div>
+
             <div className="evidence-block">
-              <p className="block-label">它在做什么</p>
+              <p className="block-label">它在做什么 · 公开资料</p>
               <p className="business-copy">{selected.business}</p>
               <div className="fact-grid">
                 <div>
@@ -1083,7 +1550,7 @@ export default function Home() {
             </div>
 
             <div className="risk-box">
-              <span>先别急着下结论</span>
+              <span>关系假设仍需现场验证</span>
               <ul>
                 {score.risks.map((risk) => (
                   <li key={risk}>{risk}</li>
@@ -1113,7 +1580,7 @@ export default function Home() {
           <article className="questions-card">
             <div className="mini-heading">
               <span>现场对话</span>
-              <b>五问定去留</b>
+              <b>带着关系假设去问</b>
             </div>
             <ol>
               {questions.map((question) => (

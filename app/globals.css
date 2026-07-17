@@ -305,6 +305,155 @@ a {
   max-width: 1360px;
 }
 
+.profile-builder {
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  margin: 0 auto 22px;
+  max-width: 1360px;
+  padding: 28px;
+}
+
+.profile-builder.profile-ready {
+  border-color: rgba(31, 141, 101, 0.5);
+  box-shadow: inset 0 4px 0 var(--green);
+}
+
+.profile-builder-head {
+  align-items: start;
+  display: flex;
+  gap: 30px;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.profile-builder-head > div:first-child > span {
+  color: var(--red);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.profile-builder-head h3 {
+  font-family: Georgia, "Songti SC", serif;
+  font-size: 30px;
+  letter-spacing: -0.035em;
+  margin: 6px 0 7px;
+}
+
+.profile-builder-head p {
+  color: rgba(23, 60, 53, 0.58);
+  font-size: 10px;
+  line-height: 1.65;
+  margin: 0;
+}
+
+.profile-status {
+  align-items: center;
+  background: var(--paper);
+  border-radius: 999px;
+  display: flex;
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 900;
+  gap: 7px;
+  padding: 9px 12px;
+}
+
+.profile-status i {
+  background: var(--red);
+  border-radius: 50%;
+  height: 7px;
+  width: 7px;
+}
+
+.profile-ready .profile-status i {
+  background: var(--green);
+}
+
+.profile-fields {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.profile-fields label {
+  display: grid;
+  gap: 7px;
+}
+
+.profile-name-field {
+  grid-column: span 4;
+}
+
+.profile-fields label > span {
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.profile-fields input,
+.profile-fields textarea {
+  background: var(--paper);
+  border: 1px solid transparent;
+  border-radius: 12px;
+  color: var(--ink);
+  outline: 0;
+  padding: 12px;
+  width: 100%;
+}
+
+.profile-fields input {
+  min-height: 44px;
+}
+
+.profile-fields textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.profile-fields input:focus,
+.profile-fields textarea:focus {
+  border-color: var(--green);
+}
+
+.profile-fields input::placeholder,
+.profile-fields textarea::placeholder {
+  color: rgba(23, 60, 53, 0.4);
+}
+
+.profile-actions {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  margin-top: 18px;
+}
+
+.profile-actions > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.profile-actions button {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 900;
+  padding: 10px 14px;
+}
+
+.profile-actions .profile-save-button {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--white);
+}
+
+.profile-actions .profile-clear-button {
+  color: #a63739;
+}
+
 .quick-steps {
   background: var(--ink);
   border-radius: 24px;
@@ -595,6 +744,14 @@ a {
   font-size: 8px;
   line-height: 1.5;
   margin-top: 3px;
+}
+
+.top-ten-why {
+  color: rgba(23, 60, 53, 0.7);
+  display: block;
+  font-size: 8px;
+  line-height: 1.45;
+  margin-top: 4px;
 }
 
 .top-ten-card button strong {
@@ -919,6 +1076,14 @@ a {
   margin-top: 5px;
 }
 
+.company-row-relation {
+  color: var(--green-bright);
+  display: block;
+  font-size: 8px;
+  font-weight: 900;
+  margin-top: 7px;
+}
+
 .company-row-reason,
 .company-row-risk {
   display: grid;
@@ -982,9 +1147,14 @@ a {
   padding: 7px 10px;
 }
 
-.company-tags span:last-child {
+.company-tags span:nth-child(2) {
   background: #d9eee3;
   color: var(--green);
+}
+
+.company-tags span:last-child:not(:nth-child(2)) {
+  background: var(--ink);
+  color: var(--green-bright);
 }
 
 .evidence-header h3 {
@@ -1063,6 +1233,92 @@ a {
 .verdict-strip p {
   font-size: 12px;
   margin: 0;
+}
+
+.relationship-card {
+  background: #e3f0e8;
+  border-left: 5px solid var(--green);
+  margin: 0 0 30px;
+  padding: 24px;
+}
+
+.relationship-card-head {
+  align-items: start;
+  display: flex;
+  gap: 24px;
+  justify-content: space-between;
+}
+
+.relationship-card-head span {
+  color: var(--green);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.relationship-card-head h4 {
+  font-family: Georgia, "Songti SC", serif;
+  font-size: 30px;
+  letter-spacing: -0.04em;
+  margin: 5px 0 0;
+}
+
+.relationship-card-head > b {
+  background: var(--white);
+  border-radius: 999px;
+  font-size: 9px;
+  max-width: 48%;
+  padding: 8px 11px;
+  text-align: right;
+}
+
+.relationship-connection {
+  font-family: Georgia, "Songti SC", serif;
+  font-size: 17px;
+  line-height: 1.65;
+  margin: 20px 0;
+}
+
+.relationship-grid {
+  border-bottom: 1px solid rgba(23, 60, 53, 0.14);
+  border-top: 1px solid rgba(23, 60, 53, 0.14);
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.relationship-grid > div {
+  border-right: 1px solid rgba(23, 60, 53, 0.14);
+  padding: 15px 16px 15px 0;
+}
+
+.relationship-grid > div + div {
+  padding-left: 16px;
+}
+
+.relationship-grid > div:last-child {
+  border-right: 0;
+}
+
+.relationship-grid span {
+  color: rgba(23, 60, 53, 0.52);
+  display: block;
+  font-size: 8px;
+  font-weight: 900;
+  margin-bottom: 7px;
+}
+
+.relationship-grid p {
+  font-size: 10px;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.relationship-card > small {
+  color: rgba(23, 60, 53, 0.48);
+  display: block;
+  font-size: 8px;
+  line-height: 1.55;
+  margin-top: 13px;
 }
 
 .block-label {
@@ -1818,6 +2074,14 @@ footer p {
     grid-template-columns: 1fr;
   }
 
+  .profile-fields {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .profile-name-field {
+    grid-column: span 2;
+  }
+
   .quick-steps {
     grid-template-columns: 1fr 1fr;
   }
@@ -1904,6 +2168,36 @@ footer p {
 
   .quick-steps {
     grid-template-columns: 1fr;
+  }
+
+  .profile-builder {
+    padding: 22px 18px;
+  }
+
+  .profile-builder-head,
+  .profile-actions {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .profile-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-name-field {
+    grid-column: auto;
+  }
+
+  .profile-fields textarea {
+    min-height: 78px;
+  }
+
+  .profile-actions > div {
+    width: 100%;
+  }
+
+  .profile-actions button {
+    flex: 1 1 auto;
   }
 
   .quick-step {
@@ -2012,6 +2306,35 @@ footer p {
     align-items: start;
     flex-direction: column;
     gap: 14px;
+  }
+
+  .relationship-card {
+    padding: 20px 17px;
+  }
+
+  .relationship-card-head {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .relationship-card-head > b {
+    max-width: none;
+    text-align: left;
+  }
+
+  .relationship-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .relationship-grid > div,
+  .relationship-grid > div + div {
+    border-bottom: 1px solid rgba(23, 60, 53, 0.14);
+    border-right: 0;
+    padding: 13px 0;
+  }
+
+  .relationship-grid > div:last-child {
+    border-bottom: 0;
   }
 
   .next-grid,
