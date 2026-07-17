@@ -31,6 +31,9 @@ test("server-renders the WAIC decision tool", async () => {
   const html = await response.text();
   assert.match(html, /WAIC 接洽雷达/);
   assert.match(html, /别只收藏展商名单/);
+  assert.match(html, /先说目标，再给你企业/);
+  assert.match(html, /今天先看这 3 家/);
+  assert.match(html, /生成今日清单/);
   assert.match(html, /企业判断/);
   assert.match(html, /内容生成/);
   assert.match(html, /飞书方案/);
@@ -52,6 +55,8 @@ test("ships local data and both deployment targets", async () => {
   assert.match(page, /小绿书长文/);
   assert.match(page, /飞书跟进卡/);
   assert.match(page, /exportFeishuCsv/);
+  assert.match(page, /waic-contact-statuses/);
+  assert.match(page, /mobile-action-bar/);
   assert.match(layout, /og\.png/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   assert.equal(JSON.parse(exhibitors).count, 963);

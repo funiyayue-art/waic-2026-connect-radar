@@ -10,29 +10,60 @@ type Goal = "采购/合作" | "投资/产业" | "媒体/研究" | "人才/求职
 type Format = "小红书笔记" | "小绿书长文" | "飞书跟进卡";
 type Tone = "行业判断" | "逛展速记" | "投融资观察" | "采购评估";
 type Decision = "跳过" | "观察" | "联系";
+type Intent = "找供应商" | "找合作伙伴" | "投资调研" | "媒体选题" | "人才交流";
+type TimeBudget = "30分钟" | "2小时" | "半天" | "全天";
+type ContactStatus = "想聊" | "已聊" | "待跟进" | "已放弃";
+type ContactResult = "有明确机会" | "需要继续确认" | "暂不跟进";
+type NextStep = "发资料" | "约二次沟通" | "导入飞书";
+type ContactRecord = {
+  result: ContactResult;
+  impression: string;
+  nextStep: NextStep;
+  updatedAt: string;
+};
 
 const GOALS: Goal[] = ["采购/合作", "投资/产业", "媒体/研究", "人才/求职"];
+const INTENT_OPTIONS: Array<{ label: Intent; goal: Goal }> = [
+  { label: "找供应商", goal: "采购/合作" },
+  { label: "找合作伙伴", goal: "采购/合作" },
+  { label: "投资调研", goal: "投资/产业" },
+  { label: "媒体选题", goal: "媒体/研究" },
+  { label: "人才交流", goal: "人才/求职" },
+];
+const TIME_BUDGETS: TimeBudget[] = ["30分钟", "2小时", "半天", "全天"];
+const ROUTE_LIMIT: Record<TimeBudget, number> = {
+  "30分钟": 3,
+  "2小时": 6,
+  "半天": 8,
+  "全天": 10,
+};
 const FORMATS: Format[] = ["小红书笔记", "小绿书长文", "飞书跟进卡"];
 const TONES: Tone[] = ["行业判断", "逛展速记", "投融资观察", "采购评估"];
 const INTERESTS = [
   "大模型",
   "智能体",
+  "机器人",
   "具身智能",
-  "算力芯片",
+  "芯片",
   "企业服务",
   "工业AI",
-  "医疗健康",
+  "医疗",
+  "自动驾驶",
   "数据基础设施",
 ];
 
 const TOPIC_KEYWORDS: Record<string, string[]> = {
   大模型: ["大模型", "AGI", "LLM", "基座模型"],
   智能体: ["智能体", "Agent", "一人公司"],
+  机器人: ["机器人", "具身", "物理世界", "空间智能"],
   具身智能: ["具身", "机器人", "物理世界", "空间智能"],
+  芯片: ["算力", "计算", "芯片", "RISC", "TPU", "基础设施"],
   算力芯片: ["算力", "计算", "芯片", "RISC", "TPU", "基础设施"],
   企业服务: ["企业", "管理", "生产力", "商业落地"],
   工业AI: ["工业", "制造", "物流", "港口", "船海", "能源"],
+  医疗: ["医疗", "健康", "生命"],
   医疗健康: ["医疗", "健康", "生命"],
+  自动驾驶: ["自动驾驶", "智驾", "汽车", "车路协同"],
   数据基础设施: ["数据", "存储", "数据库", "计算"],
 };
 
@@ -43,6 +74,14 @@ function isUnknown(value: string) {
 function companyName(company: string) {
   const parts = company.split("/").map((part) => part.trim());
   return parts.length > 1 && parts[1].length < 32 ? parts[1] : parts[0];
+}
+
+function compactText(value: string, length = 54) {
+  const text = value
+    .replace("产品/业务指向明确：", "")
+    .replace("资本阶段信号：", "")
+    .trim();
+  return text.length > length ? `${text.slice(0, length)}…` : text;
 }
 
 function scoreCompany(company: Exhibitor, goal: Goal, interests: string[]) {
@@ -213,6 +252,30 @@ function matchForums(company: Exhibitor, interests: string[]) {
     .slice(0, 3);
 }
 
+function recommendForums(interests: string[]) {
+  const tokens = interests.flatMap(
+    (interest) => TOPIC_KEYWORDS[interest] ?? [interest],
+  );
+
+  return (forumPayload as Forum[])
+    .map((forum) => {
+      const text = `${forum.name} ${forum.nameRaw} ${forum.topic}`.toLowerCase();
+      const relevance = tokens.reduce(
+        (total, token) => total + (text.includes(token.toLowerCase()) ? 3 : 0),
+        forum.topic === "前沿综合" ? 1 : 0,
+      );
+      return { ...forum, relevance };
+    })
+    .filter((forum) => forum.relevance > 0)
+    .sort(
+      (a, b) =>
+        b.relevance - a.relevance ||
+        a.date.localeCompare(b.date) ||
+        a.start.localeCompare(b.start),
+    )
+    .slice(0, 3);
+}
+
 function formatDate(date: string) {
   const [, month, day] = date.split("-");
   return `${Number(month)}月${Number(day)}日`;
@@ -328,11 +391,26 @@ export default function Home() {
   const [search, setSearch] = useState("");
   const [industry, setIndustry] = useState("全部行业");
   const [selectedId, setSelectedId] = useState(exhibitors[0].id);
+  const [intent, setIntent] = useState<Intent>("找合作伙伴");
   const [goal, setGoal] = useState<Goal>("采购/合作");
   const [interests, setInterests] = useState<string[]>(["智能体", "企业服务"]);
+  const [timeBudget, setTimeBudget] = useState<TimeBudget>("2小时");
+  const [planGenerated, setPlanGenerated] = useState(false);
   const [format, setFormat] = useState<Format>("小红书笔记");
   const [tone, setTone] = useState<Tone>("行业判断");
   const [decisions, setDecisions] = useState<Record<number, Decision>>({});
+  const [savedCompanyIds, setSavedCompanyIds] = useState<number[]>([]);
+  const [contactStatuses, setContactStatuses] = useState<
+    Record<number, ContactStatus>
+  >({});
+  const [contactRecords, setContactRecords] = useState<
+    Record<number, ContactRecord>
+  >({});
+  const [contactSheetOpen, setContactSheetOpen] = useState(false);
+  const [contactResult, setContactResult] =
+    useState<ContactResult>("需要继续确认");
+  const [nextStep, setNextStep] = useState<NextStep>("约二次沟通");
+  const [quickImpression, setQuickImpression] = useState("");
   const [note, setNote] = useState("");
   const [toast, setToast] = useState("");
 
@@ -354,6 +432,59 @@ export default function Home() {
       .slice(0, 60);
   }, [exhibitors, industry, search]);
 
+  const filteredRanked = useMemo(
+    () =>
+      filtered
+        .map((company) => ({
+          company,
+          companyScore: scoreCompany(company, goal, interests),
+        }))
+        .sort(
+          (a, b) =>
+            b.companyScore.total - a.companyScore.total ||
+            a.company.id - b.company.id,
+        ),
+    [filtered, goal, interests],
+  );
+
+  const rankedCompanies = useMemo(
+    () =>
+      exhibitors
+        .map((company) => ({
+          company,
+          companyScore: scoreCompany(company, goal, interests),
+        }))
+        .sort(
+          (a, b) =>
+            b.companyScore.total - a.companyScore.total ||
+            a.company.id - b.company.id,
+        ),
+    [exhibitors, goal, interests],
+  );
+
+  const featuredCompanies = useMemo(() => {
+    const picked: typeof rankedCompanies = [];
+    const usedIndustries = new Set<string>();
+    for (const entry of rankedCompanies) {
+      if (usedIndustries.has(entry.company.industry)) continue;
+      picked.push(entry);
+      usedIndustries.add(entry.company.industry);
+      if (picked.length === 3) break;
+    }
+    return picked;
+  }, [rankedCompanies]);
+
+  const topRecommendations = rankedCompanies.slice(0, 10);
+  const routeGroups = useMemo(() => {
+    const groups = new Map<string, typeof rankedCompanies>();
+    for (const entry of rankedCompanies.slice(0, ROUTE_LIMIT[timeBudget])) {
+      const venue = entry.company.venue || "展馆待确认";
+      groups.set(venue, [...(groups.get(venue) ?? []), entry]);
+    }
+    return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [rankedCompanies, timeBudget]);
+  const planForums = useMemo(() => recommendForums(interests), [interests]);
+
   const selected =
     exhibitors.find((item) => item.id === selectedId) ?? exhibitors[0];
   const score = useMemo(
@@ -374,6 +505,7 @@ export default function Home() {
   );
   const savedDecision = decisions[selected.id] ?? score.action;
 
+  /* eslint-disable react-hooks/set-state-in-effect -- Browser-only local records are restored after hydration. */
   useEffect(() => {
     const saved = window.localStorage.getItem("waic-decisions");
     if (saved) {
@@ -386,9 +518,27 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    const savedCompanies = window.localStorage.getItem("waic-saved-companies");
+    const savedStatuses = window.localStorage.getItem("waic-contact-statuses");
+    const savedRecords = window.localStorage.getItem("waic-contact-records");
+    try {
+      if (savedCompanies) setSavedCompanyIds(JSON.parse(savedCompanies));
+      if (savedStatuses) setContactStatuses(JSON.parse(savedStatuses));
+      if (savedRecords) setContactRecords(JSON.parse(savedRecords));
+    } catch {
+      // Ignore malformed local data.
+    }
+  }, []);
+
+  useEffect(() => {
     const saved = window.localStorage.getItem(`waic-note-${selected.id}`);
     setNote(saved ?? "");
-  }, [selected.id]);
+    const record = contactRecords[selected.id];
+    setQuickImpression(record?.impression ?? "");
+    setContactResult(record?.result ?? "需要继续确认");
+    setNextStep(record?.nextStep ?? "约二次沟通");
+  }, [selected.id, contactRecords]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   function showToast(message: string) {
     setToast(message);
@@ -403,11 +553,86 @@ export default function Home() {
     );
   }
 
+  function chooseIntent(option: (typeof INTENT_OPTIONS)[number]) {
+    setIntent(option.label);
+    setGoal(option.goal);
+  }
+
+  function generatePlan() {
+    setPlanGenerated(true);
+    showToast("今日接洽清单已生成");
+    window.setTimeout(
+      () =>
+        document
+          .getElementById("personal-plan")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+      80,
+    );
+  }
+
+  function goToCompany(companyId: number) {
+    setSelectedId(companyId);
+    setIndustry("全部行业");
+    window.setTimeout(
+      () =>
+        document
+          .getElementById("decision")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+      50,
+    );
+  }
+
   function saveDecision(decision: Decision) {
     const next = { ...decisions, [selected.id]: decision };
     setDecisions(next);
     window.localStorage.setItem("waic-decisions", JSON.stringify(next));
     showToast(`已存为「${decision}」`);
+  }
+
+  function toggleSavedCompany() {
+    const next = savedCompanyIds.includes(selected.id)
+      ? savedCompanyIds.filter((id) => id !== selected.id)
+      : [...savedCompanyIds, selected.id];
+    setSavedCompanyIds(next);
+    window.localStorage.setItem("waic-saved-companies", JSON.stringify(next));
+    showToast(next.includes(selected.id) ? "已收藏企业" : "已取消收藏");
+  }
+
+  function setContactStatus(status: ContactStatus) {
+    const next = { ...contactStatuses, [selected.id]: status };
+    setContactStatuses(next);
+    window.localStorage.setItem("waic-contact-statuses", JSON.stringify(next));
+    showToast(`已标记为「${status}」`);
+  }
+
+  function saveContactRecord() {
+    const status: ContactStatus =
+      contactResult === "暂不跟进"
+        ? "已放弃"
+        : contactResult === "有明确机会"
+          ? "待跟进"
+          : "已聊";
+    const record: ContactRecord = {
+      result: contactResult,
+      impression: quickImpression.trim(),
+      nextStep,
+      updatedAt: new Date().toISOString(),
+    };
+    const nextRecords = { ...contactRecords, [selected.id]: record };
+    const nextStatuses = { ...contactStatuses, [selected.id]: status };
+    setContactRecords(nextRecords);
+    setContactStatuses(nextStatuses);
+    window.localStorage.setItem("waic-contact-records", JSON.stringify(nextRecords));
+    window.localStorage.setItem("waic-contact-statuses", JSON.stringify(nextStatuses));
+    if (quickImpression.trim()) saveNote(quickImpression.trim());
+    setContactSheetOpen(false);
+    showToast(`接洽记录已保存 · ${status}`);
+  }
+
+  function openGenerator() {
+    document
+      .getElementById("generator")
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   function saveNote(value: string) {
@@ -488,8 +713,8 @@ export default function Home() {
             从公司做什么、资本处在哪一段、还缺什么证据出发，生成一张能被读者真正使用的企业判断卡。
           </p>
           <div className="hero-actions">
-            <a className="primary-button" href="#decision">
-              开始筛企业 <span>→</span>
+            <a className="primary-button" href="#personalize">
+              生成今日清单 <span>→</span>
             </a>
             <a className="secondary-button" href="#method">
               看判断方法
@@ -517,6 +742,181 @@ export default function Home() {
           </div>
           <p className="board-note">数据在浏览器本地计算，不上传企业选择与笔记。</p>
         </div>
+      </section>
+
+      <section className="quick-start" id="personalize">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">00 · BUILD MY DAY</p>
+            <h2>先说目标，再给你企业</h2>
+          </div>
+          <p>三步生成个人接洽清单：优先企业、相关论坛，以及按展馆整理的现场路线。</p>
+        </div>
+
+        <div className="quick-steps">
+          <article className="quick-step">
+            <span className="step-number">01</span>
+            <div>
+              <b>今天主要目标是什么？</b>
+              <div className="choice-chips">
+                {INTENT_OPTIONS.map((option) => (
+                  <button
+                    className={intent === option.label ? "active" : ""}
+                    key={option.label}
+                    onClick={() => chooseIntent(option)}
+                    type="button"
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </article>
+
+          <article className="quick-step">
+            <span className="step-number">02</span>
+            <div>
+              <b>关注哪些方向？</b>
+              <div className="choice-chips">
+                {INTERESTS.map((item) => (
+                  <button
+                    className={interests.includes(item) ? "active" : ""}
+                    key={item}
+                    onClick={() => toggleInterest(item)}
+                    type="button"
+                  >
+                    {item}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </article>
+
+          <article className="quick-step">
+            <span className="step-number">03</span>
+            <div>
+              <b>今天有多少时间？</b>
+              <div className="choice-chips">
+                {TIME_BUDGETS.map((item) => (
+                  <button
+                    className={timeBudget === item ? "active" : ""}
+                    key={item}
+                    onClick={() => setTimeBudget(item)}
+                    type="button"
+                  >
+                    {item}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </article>
+
+          <button className="build-plan-button" onClick={generatePlan} type="button">
+            生成我的今日接洽清单 <span>→</span>
+          </button>
+        </div>
+
+        <div className="featured-zone" id="personal-plan">
+          <div className="featured-heading">
+            <div>
+              <span>首页主推</span>
+              <h3>今天先看这 3 家</h3>
+            </div>
+            <p>分别来自不同的相关行业；推荐会随你的目标和关注方向实时变化。</p>
+          </div>
+          <div className="featured-grid">
+            {featuredCompanies.map(({ company, companyScore }, index) => (
+              <button
+                className="featured-company"
+                key={company.id}
+                onClick={() => goToCompany(company.id)}
+                type="button"
+              >
+                <div className="featured-topline">
+                  <span>0{index + 1} · {company.industry}</span>
+                  <b>{companyScore.total}<small>/100</small></b>
+                </div>
+                <h4>{companyName(company.company)}</h4>
+                <p>{compactText(companyScore.strengths[0], 62)}</p>
+                <div className="featured-reason">
+                  <span>推荐理由</span>
+                  <b>{compactText(companyScore.strengths[1], 44)}</b>
+                </div>
+                <div className="featured-risk">
+                  <span>需确认</span>
+                  <p>{compactText(companyScore.risks[0], 48)}</p>
+                </div>
+                <i>查看判断 →</i>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {planGenerated && (
+          <div className="plan-results" aria-live="polite">
+            <article className="top-ten-card">
+              <div className="plan-card-heading">
+                <span>TOP 10</span>
+                <b>最值得接洽的企业</b>
+              </div>
+              <ol>
+                {topRecommendations.map(({ company, companyScore }, index) => (
+                  <li key={company.id}>
+                    <button onClick={() => goToCompany(company.id)} type="button">
+                      <span>{String(index + 1).padStart(2, "0")}</span>
+                      <div>
+                        <b>{companyName(company.company)}</b>
+                        <small>{company.industry} · {company.venue} {company.booth}</small>
+                      </div>
+                      <strong>{companyScore.total}</strong>
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            </article>
+
+            <article className="plan-forums-card">
+              <div className="plan-card-heading">
+                <span>FORUMS</span>
+                <b>推荐论坛</b>
+              </div>
+              <div>
+                {planForums.map((forum) => (
+                  <section key={forum.id}>
+                    <time>{formatDate(forum.date)} · {forum.start}</time>
+                    <b>{forum.name}</b>
+                    <p>{forum.location || forum.locationRaw}</p>
+                  </section>
+                ))}
+              </div>
+            </article>
+
+            <article className="route-card">
+              <div className="plan-card-heading">
+                <span>ROUTE · {timeBudget}</span>
+                <b>按展馆整理的现场路线</b>
+              </div>
+              <div className="route-groups">
+                {routeGroups.map(([venue, entries], index) => (
+                  <section key={venue}>
+                    <span>{String(index + 1).padStart(2, "0")}</span>
+                    <div>
+                      <b>{venue}</b>
+                      <p>
+                        {entries
+                          .map(
+                            ({ company }) =>
+                              `${companyName(company.company)} ${company.booth}`,
+                          )
+                          .join(" → ")}
+                      </p>
+                    </div>
+                  </section>
+                ))}
+              </div>
+            </article>
+          </div>
+        )}
       </section>
 
       <section className="workspace" id="decision">
@@ -582,28 +982,43 @@ export default function Home() {
               ))}
             </select>
             <div className="result-meta">
-              <span>显示 {filtered.length} 家</span>
-              <span>点击切换</span>
+              <span>显示 {filteredRanked.length} 家</span>
+              <span>已按接洽分排序</span>
             </div>
             <div className="company-list">
-              {filtered.map((company) => (
+              {filteredRanked.map(({ company, companyScore }) => (
                 <button
                   className={company.id === selected.id ? "company-row active" : "company-row"}
                   key={company.id}
                   onClick={() => setSelectedId(company.id)}
                   type="button"
                 >
-                  <span className="company-index">{String(company.id).padStart(3, "0")}</span>
-                  <span>
-                    <b>{companyName(company.company)}</b>
+                  <span className={`company-score-mini score-${companyScore.action}`}>
+                    <b>{companyScore.total}</b>
+                    <small>{companyScore.action}</small>
+                  </span>
+                  <span className="company-row-copy">
+                    <span className="company-row-name">
+                      <b>{companyName(company.company)}</b>
+                      {contactStatuses[company.id] && (
+                        <em>{contactStatuses[company.id]}</em>
+                      )}
+                    </span>
                     <small>
                       {company.segment} · {company.booth}
                     </small>
+                    <span className="company-row-reason">
+                      <i aria-hidden="true">＋</i>
+                      {compactText(companyScore.strengths[0], 42)}
+                    </span>
+                    <span className="company-row-risk">
+                      <i aria-hidden="true">△</i>
+                      {compactText(companyScore.risks[0], 38)}
+                    </span>
                   </span>
-                  <i aria-hidden="true">›</i>
                 </button>
               ))}
-              {!filtered.length && (
+              {!filteredRanked.length && (
                 <div className="empty-state">没有找到匹配展商，换个关键词试试。</div>
               )}
             </div>
@@ -893,6 +1308,116 @@ export default function Home() {
           公开资料仅用于交流与现场决策辅助。企业信息、融资与日程可能变化，正式接洽前请二次核验。
         </p>
       </footer>
+
+      <div className="mobile-action-bar" aria-label="现场快捷操作">
+        <button
+          className={savedCompanyIds.includes(selected.id) ? "active" : ""}
+          onClick={toggleSavedCompany}
+          type="button"
+        >
+          <span>☆</span>
+          {savedCompanyIds.includes(selected.id) ? "已收藏" : "收藏"}
+        </button>
+        <button
+          className={contactStatuses[selected.id] === "想聊" ? "active" : ""}
+          onClick={() => setContactStatus("想聊")}
+          type="button"
+        >
+          <span>＋</span>
+          加入路线
+        </button>
+        <button
+          className={contactStatuses[selected.id] ? "active" : ""}
+          onClick={() => setContactSheetOpen(true)}
+          type="button"
+        >
+          <span>✓</span>
+          {contactStatuses[selected.id] ?? "标记已聊"}
+        </button>
+        <button onClick={openGenerator} type="button">
+          <span>✦</span>
+          生成内容
+        </button>
+      </div>
+
+      {contactSheetOpen && (
+        <div
+          className="contact-sheet-backdrop"
+          onClick={() => setContactSheetOpen(false)}
+          role="presentation"
+        >
+          <section
+            aria-labelledby="contact-sheet-title"
+            aria-modal="true"
+            className="contact-sheet"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <div className="contact-sheet-head">
+              <div>
+                <span>现场快速记录</span>
+                <h3 id="contact-sheet-title">{companyName(selected.company)}</h3>
+              </div>
+              <button
+                aria-label="关闭接洽记录"
+                onClick={() => setContactSheetOpen(false)}
+                type="button"
+              >
+                ×
+              </button>
+            </div>
+
+            <fieldset>
+              <legend>接洽结果</legend>
+              <div className="sheet-options">
+                {(
+                  ["有明确机会", "需要继续确认", "暂不跟进"] as ContactResult[]
+                ).map((item) => (
+                  <button
+                    className={contactResult === item ? "active" : ""}
+                    key={item}
+                    onClick={() => setContactResult(item)}
+                    type="button"
+                  >
+                    {item}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+
+            <label className="impression-field">
+              <span>补充一句现场印象</span>
+              <textarea
+                onChange={(event) => setQuickImpression(event.target.value)}
+                placeholder="例如：已约 Demo，需核验客户案例……"
+                value={quickImpression}
+              />
+            </label>
+
+            <fieldset>
+              <legend>下一步</legend>
+              <div className="sheet-options">
+                {(["发资料", "约二次沟通", "导入飞书"] as NextStep[]).map(
+                  (item) => (
+                    <button
+                      className={nextStep === item ? "active" : ""}
+                      key={item}
+                      onClick={() => setNextStep(item)}
+                      type="button"
+                    >
+                      {item}
+                    </button>
+                  ),
+                )}
+              </div>
+            </fieldset>
+
+            <button className="save-contact-button" onClick={saveContactRecord} type="button">
+              保存接洽记录
+            </button>
+          </section>
+        </div>
+      )}
 
       {toast && <div className="toast" role="status">{toast}</div>}
     </main>
