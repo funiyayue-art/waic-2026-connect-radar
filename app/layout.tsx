@@ -12,9 +12,9 @@ export async function generateMetadata(): Promise<Metadata> {
     requestHeaders.get("x-forwarded-proto") ??
     (host.includes("localhost") ? "http" : "https");
   const metadataBase = new URL(`${protocol}://${host}`);
-  const title = "WAIC 接洽雷达｜展商判断与内容生成器";
+  const title = "WAIC 接洽雷达｜企业接洽决策助手";
   const description =
-    "用 963 家 WAIC 2026 展商资料和论坛日程，生成企业证据卡、接洽判断、小红书内容与飞书跟进记录。";
+    "根据身份、行业、参会目标和可提供资源，从 963 家 WAIC 2026 展商中筛选值得接洽的企业，并生成现场问题与跟进清单。";
 
   return {
     metadataBase,

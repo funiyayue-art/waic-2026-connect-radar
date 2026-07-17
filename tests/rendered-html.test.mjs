@@ -30,16 +30,14 @@ test("server-renders the WAIC decision tool", async () => {
 
   const html = await response.text();
   assert.match(html, /WAIC 接洽雷达/);
-  assert.match(html, /别只收藏展商名单/);
-  assert.match(html, /先录企业，再说为什么见/);
-  assert.match(html, /我的企业画像/);
-  assert.match(html, /为什么值得去/);
-  assert.match(html, /可能形成什么/);
-  assert.match(html, /今天先看这 3 家/);
-  assert.match(html, /生成今日清单/);
-  assert.match(html, /企业判断/);
-  assert.match(html, /内容生成/);
-  assert.match(html, /飞书方案/);
+  assert.match(html, /不是再给你一份名录/);
+  assert.match(html, /先说你是谁，再判断谁值得见/);
+  assert.match(html, /用户身份/);
+  assert.match(html, /本次参会目标/);
+  assert.match(html, /你可以提供的资源/);
+  assert.match(html, /生成企业推荐/);
+  assert.match(html, /我的接洽清单/);
+  assert.match(html, /资料不足时不强行评分/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);
 });
 
@@ -54,16 +52,24 @@ test("ships local data and both deployment targets", async () => {
       readFile(new URL("../github-pages/dist/index.html", import.meta.url), "utf8"),
     ]);
 
-  assert.match(page, /小红书笔记/);
-  assert.match(page, /小绿书长文/);
-  assert.match(page, /飞书跟进卡/);
-  assert.match(page, /exportFeishuCsv/);
-  assert.match(page, /waic-contact-statuses/);
-  assert.match(page, /waic-business-profile/);
-  assert.match(page, /TRAINING_DEMO_PROFILE/);
-  assert.match(page, /潜在客户/);
-  assert.match(page, /上游能力方/);
-  assert.match(page, /mobile-action-bar/);
+  assert.match(page, /DecisionApp/);
+  const decisionApp = await readFile(
+    new URL("../app/DecisionApp.tsx", import.meta.url),
+    "utf8",
+  );
+  const recommendation = await readFile(
+    new URL("../app/recommendation.js", import.meta.url),
+    "utf8",
+  );
+  assert.match(decisionApp, /生成企业推荐/);
+  assert.match(decisionApp, /waic-contact-list-v2/);
+  assert.match(decisionApp, /现场验证问题/);
+  assert.match(decisionApp, /建议开场话术/);
+  assert.match(decisionApp, /记录现场沟通/);
+  assert.match(recommendation, /行业匹配/);
+  assert.match(recommendation, /资源互补/);
+  assert.match(recommendation, /信息不足/);
+  assert.doesNotMatch(decisionApp, /小红书笔记|小绿书长文|内容生成器/);
   assert.match(layout, /og\.png/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   assert.equal(JSON.parse(exhibitors).count, 963);
