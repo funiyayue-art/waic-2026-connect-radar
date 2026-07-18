@@ -1,98 +1,129 @@
-# vinext-starter
+# WAIC 接洽雷达
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+面向 WAIC 现场参会者的免费企业发现与接洽决策工具。无需登录，适配 GitHub Pages、手机浏览器和微信内置浏览器。
 
-## Prerequisites
+线上地址：<https://funiyayue-art.github.io/waic-2026-connect-radar/>
 
-- Node.js `>=22.13.0`
+## 两种使用方式
 
-## Quick Start
+### 随便逛
+
+不填写用户画像，直接使用全部真实展商数据：
+
+- 搜索企业名称、简称、英文名、展馆、展位和业务；
+- 支持别名、同义词、拼音全拼、拼音首字母、已知错别字、高可信模糊匹配；
+- 支持全角/半角展位号归一化和多关键词搜索；
+- 按机器人、Agent、工业 AI、AI 医疗、芯片等真实分类浏览；
+- 随机发现会优先选择资料较完整、展馆和类别较分散的企业；
+- “感兴趣”是轻收藏，不会生成个性化分数。
+
+### 找目标
+
+基于真实用户画像和全部展商数据：
+
+- 输入身份、行业、目标、关注方向、可提供资源和当前问题；
+- 计算企业接洽优先级；
+- 展示具体推荐理由、双方关系、开场话术和现场验证问题；
+- 加入接洽清单，按展馆和展位生成建议顺序；
+- 记录已接洽、会后跟进和现场判断。
+
+## 真实数据入口
+
+所有正式搜索、推荐、详情、收藏和路线均使用：
+
+```text
+app/data/exhibitors.json
+app/data/forums.json
+```
+
+人工维护的检索增强数据：
+
+```text
+app/data/company-aliases.json
+app/data/search-synonyms.json
+```
+
+HTML 视觉原型中的虚构企业、固定推荐和写死路线没有进入正式功能。
+
+## 搜索如何工作
+
+搜索索引在页面初始化时建立一次，并缓存以下字段：
+
+- 企业名称及自动简称；
+- 人工别名；
+- 英文名；
+- 展馆和标准化展位号；
+- 行业与细分领域；
+- 主营业务；
+- 中文全拼和拼音首字母。
+
+排序大致遵循：
+
+1. 企业名、人工别名和展位号精确命中；
+2. 名称前缀、名称包含和英文名；
+3. 拼音全拼、拼音首字母；
+4. 产品、技术标签、细分类别和行业；
+5. 同义词扩召回；
+6. 高可信错别字与模糊匹配。
+
+命中全部关键词、命中多个字段和完整短语会加分。同义词与模糊结果不会压过直接命中。短词不会启动通用模糊搜索。
+
+## 推荐如何评分
+
+推荐仍使用可解释的 100 分结构：
+
+```text
+行业匹配：0—30
+关注方向：0—25
+参会目标：0—25
+资源互补：0—15
+资料完整：0—5
+```
+
+优先级：
+
+```text
+A：80—100，重点接洽
+B：60—79，有时间可聊
+C：40—59，先看资料
+D：0—39，暂不优先
+信息不足：缺少支持初筛的核心公开资料
+```
+
+推荐理由引用用户选择与企业公开字段，不使用融资或知名度替代业务相关性。
+
+## 路线如何生成
+
+- 接洽清单非空时，优先使用用户手动顺序；
+- 清单为空时，使用推荐中的 A/B 企业；
+- 时间预算分别限制为 3、6、8、10 家；
+- 按展馆分组；
+- 没有手动顺序时，同一展馆内按展位号稳定排序。
+
+当前路线是展馆与展位层面的建议顺序，不代表真实最短步行路径，也不是室内地图导航。
+
+## 本地存储
+
+用户画像、兴趣收藏、接洽清单、沟通记录、不感兴趣列表、最近搜索和随机浏览历史只保存在当前浏览器。v3 存储键兼容迁移旧版 v2 数据。
+
+## 开发与验证
+
+需要 Node.js `>=22.13.0`。
 
 ```bash
 npm install
 npm run dev
-npm run build
+npm run build:pages
+npm test
 ```
 
-This starter does not use `wrangler.jsonc`.
+测试覆盖：
 
-## Included Shape
-
-- edit site code under `app/`
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
-
-## Workspace Auth Headers
-
-OpenAI workspace sites can read the current user's email from
-`oai-authenticated-user-email`.
-
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
-
-Treat the full name as optional and fall back to email when it is absent:
-
-```tsx
-import { headers } from "next/headers";
-
-export default async function Home() {
-  const requestHeaders = await headers();
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
-```
-
-## Optional Dispatch-Owned ChatGPT Sign-In
-
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
-
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
-
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
-
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
-
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
-
-## Useful Commands
-
-- `npm run dev`: start local development
-- `npm run build`: verify the vinext build output
-- `npm test`: build the starter and verify its rendered loading skeleton
-- `npm run db:generate`: generate Drizzle migrations after schema changes
-
-## Learn More
-
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+- 真实别名、品牌名、拼音和错别字；
+- 展位号归一化；
+- 同义词和多关键词跨字段排序；
+- 分类筛选与随机发现；
+- 三类真实用户画像；
+- 推荐边界；
+- 清单优先、时间限制、展馆分组和路线顺序；
+- 服务端渲染与 GitHub Pages 构建。

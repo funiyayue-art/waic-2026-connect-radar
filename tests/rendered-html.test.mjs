@@ -30,13 +30,18 @@ test("server-renders the WAIC decision tool", async () => {
 
   const html = await response.text();
   assert.match(html, /WAIC 接洽雷达/);
-  assert.match(html, /不是再给你一份名录/);
+  assert.match(html, /告诉你该见谁、为何值得聊、现场问什么/);
+  assert.match(html, /我先随便逛逛/);
+  assert.match(html, /帮我规划该见谁/);
+  assert.match(html, /搜索全部展商/);
+  assert.match(html, /换一批/);
   assert.match(html, /先说你是谁，再判断谁值得见/);
   assert.match(html, /用户身份/);
   assert.match(html, /本次参会目标/);
   assert.match(html, /你可以提供的资源/);
   assert.match(html, /生成企业推荐/);
-  assert.match(html, /我的接洽清单/);
+  assert.match(html, /我的企业/);
+  assert.match(html, /准备接洽企业/);
   assert.match(html, /资料不足时不强行评分/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);
 });
@@ -62,7 +67,10 @@ test("ships local data and both deployment targets", async () => {
     "utf8",
   );
   assert.match(decisionApp, /生成企业推荐/);
-  assert.match(decisionApp, /waic-contact-list-v2/);
+  assert.match(decisionApp, /waic-saved-companies-v3/);
+  assert.match(decisionApp, /ExploreMode/);
+  assert.match(decisionApp, /BottomNavigation/);
+  assert.match(decisionApp, /BackToTop/);
   assert.match(decisionApp, /现场验证问题/);
   assert.match(decisionApp, /建议开场话术/);
   assert.match(decisionApp, /记录现场沟通/);
@@ -79,6 +87,9 @@ test("ships local data and both deployment targets", async () => {
   assert.doesNotMatch(pagesIndex, /内容生成器/);
 
   await access(new URL("../public/og.png", import.meta.url));
+  await access(new URL("../app/data/company-aliases.json", import.meta.url));
+  await access(new URL("../app/data/search-synonyms.json", import.meta.url));
+  await access(new URL("../app/search/searchCompanies.js", import.meta.url));
   await access(new URL("../.github/workflows/pages.yml", import.meta.url));
   await assert.rejects(
     access(new URL("../app/_sites-preview/SkeletonPreview.tsx", import.meta.url)),

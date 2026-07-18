@@ -10,13 +10,14 @@
     "build": "vinext build",
     "build:pages": "vite build --config github-pages/vite.config.ts",
     "start": "vinext start",
-    "test": "npm run build && node --test tests/*.test.mjs",
+    "test": "vinext build && node --test tests/*.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern github-pages/dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",
     "next": "16.2.6",
+    "pinyin-pro": "^3.28.1",
     "react": "19.2.6",
     "react-dom": "19.2.6"
   },

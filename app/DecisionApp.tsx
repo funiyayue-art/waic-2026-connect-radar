@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import BackToTop from "./components/BackToTop";
+import BottomNavigation from "./components/BottomNavigation";
+import ExploreMode from "./components/explore/ExploreMode";
+import Hero from "./components/Hero";
 import exhibitorPayload from "./data/exhibitors.json";
 import forumPayload from "./data/forums.json";
 import {
@@ -15,6 +19,7 @@ import {
   compactText,
   rankCompanies,
 } from "./recommendation";
+import { buildSuggestedRoute } from "./route-planner";
 
 type Exhibitor = (typeof exhibitorPayload.exhibitors)[number];
 type Forum = (typeof forumPayload)[number];
@@ -35,19 +40,39 @@ type ContactRecord = {
   followUp: boolean;
   updatedAt: string;
 };
-type Recommendation = ReturnType<typeof rankCompanies>[number];
+type SavedCompanySource = "explore" | "recommendation";
+type SavedCompany = {
+  companyId: number;
+  source: SavedCompanySource;
+  savedAt: string;
+};
+type AppMode = "explore" | "planned" | "my";
+type Recommendation = {
+  company: Exhibitor;
+  priority: {
+    code: string;
+    label: string;
+  };
+  total: number;
+  summary: string;
+  industryMatches: string[];
+  interestMatches: string[];
+  relationships: string[];
+  matchReasons: string[];
+  priorityBasis: string[];
+  questions: string[];
+  openingMessage: string;
+};
 
 const TIME_BUDGETS: TimeBudget[] = ["30分钟", "2小时", "半天", "全天"];
-const ROUTE_LIMIT: Record<TimeBudget, number> = {
-  "30分钟": 3,
-  "2小时": 6,
-  "半天": 8,
-  "全天": 10,
-};
-const PROFILE_KEY = "waic-decision-profile-v2";
-const SAVED_KEY = "waic-contact-list-v2";
-const RECORDS_KEY = "waic-contact-records-v2";
-const IGNORED_KEY = "waic-ignored-companies-v2";
+const PROFILE_KEY = "waic-decision-profile-v3";
+const SAVED_KEY = "waic-saved-companies-v3";
+const RECORDS_KEY = "waic-contact-records-v3";
+const IGNORED_KEY = "waic-ignored-companies-v3";
+const LEGACY_PROFILE_KEY = "waic-decision-profile-v2";
+const LEGACY_SAVED_KEY = "waic-contact-list-v2";
+const LEGACY_RECORDS_KEY = "waic-contact-records-v2";
+const LEGACY_IGNORED_KEY = "waic-ignored-companies-v2";
 
 function cloneProfile(profile: Profile): Profile {
   return {
@@ -193,6 +218,8 @@ function FieldChips({
 
 export default function DecisionApp() {
   const companies = exhibitorPayload.exhibitors as Exhibitor[];
+  const [activeMode, setActiveMode] = useState<AppMode>("explore");
+  const [exploreModalOpen, setExploreModalOpen] = useState(false);
   const [draft, setDraft] = useState<Profile>(
     cloneProfile(EMPTY_USER_PROFILE as Profile),
   );
@@ -207,8 +234,9 @@ export default function DecisionApp() {
     useState<PriorityFilter>("全部优先级");
   const [categoryFilter, setCategoryFilter] = useState("全部展商类别");
   const [directionFilter, setDirectionFilter] = useState("全部技术方向");
-  const [savedIds, setSavedIds] = useState<number[]>([]);
+  const [savedCompanies, setSavedCompanies] = useState<SavedCompany[]>([]);
   const [ignoredIds, setIgnoredIds] = useState<number[]>([]);
+  const [focusCompanyId, setFocusCompanyId] = useState<number | null>(null);
   const [records, setRecords] = useState<Record<number, ContactRecord>>({});
   const [recordingId, setRecordingId] = useState<number | null>(null);
   const [recordStatus, setRecordStatus] =
@@ -218,8 +246,15 @@ export default function DecisionApp() {
   const [timeBudget, setTimeBudget] = useState<TimeBudget>("2小时");
   const [toast, setToast] = useState("");
 
+  const interestedIds = savedCompanies
+    .filter((item) => item.source === "explore")
+    .map((item) => item.companyId);
+  const savedIds = savedCompanies
+    .filter((item) => item.source === "recommendation")
+    .map((item) => item.companyId);
+
   const recommendations = useMemo(
-    () => rankCompanies(companies, profile),
+    () => rankCompanies(companies, profile) as Recommendation[],
     [companies, profile],
   );
 
@@ -247,37 +282,43 @@ export default function DecisionApp() {
 
   const visibleRecommendations = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    return recommendations.filter((recommendation) => {
-      const company = recommendation.company;
-      if (ignoredIds.includes(company.id)) return false;
-      if (
-        priorityFilter !== "全部优先级" &&
-        recommendation.priority.code !== priorityFilter
-      ) {
-        return false;
-      }
-      if (
-        categoryFilter !== "全部展商类别" &&
-        company.industry !== categoryFilter
-      ) {
-        return false;
-      }
-      if (
-        directionFilter !== "全部技术方向" &&
-        !recommendation.interestMatches.includes(directionFilter)
-      ) {
-        return false;
-      }
-      if (
-        needle &&
-        !`${company.company} ${company.business} ${company.segment} ${company.booth}`
-          .toLowerCase()
-          .includes(needle)
-      ) {
-        return false;
-      }
-      return true;
-    });
+    return recommendations
+      .filter((recommendation) => {
+        const company = recommendation.company;
+        if (ignoredIds.includes(company.id)) return false;
+        if (
+          priorityFilter !== "全部优先级" &&
+          recommendation.priority.code !== priorityFilter
+        ) {
+          return false;
+        }
+        if (
+          categoryFilter !== "全部展商类别" &&
+          company.industry !== categoryFilter
+        ) {
+          return false;
+        }
+        if (
+          directionFilter !== "全部技术方向" &&
+          !recommendation.interestMatches.includes(directionFilter)
+        ) {
+          return false;
+        }
+        if (
+          needle &&
+          !`${company.company} ${company.business} ${company.segment} ${company.booth}`
+            .toLowerCase()
+            .includes(needle)
+        ) {
+          return false;
+        }
+        return true;
+      })
+      .sort(
+        (left, right) =>
+          Number(right.company.id === focusCompanyId) -
+          Number(left.company.id === focusCompanyId),
+      );
   }, [
     recommendations,
     ignoredIds,
@@ -285,6 +326,7 @@ export default function DecisionApp() {
     categoryFilter,
     directionFilter,
     search,
+    focusCompanyId,
   ]);
 
   const priorityCounts = useMemo(
@@ -300,45 +342,65 @@ export default function DecisionApp() {
   const savedRecommendations = savedIds
     .map((id) => recommendationById.get(id))
     .filter(Boolean) as Recommendation[];
+  const interestedCompanies = interestedIds
+    .map((id) => companies.find((company) => company.id === id))
+    .filter(Boolean) as Exhibitor[];
 
-  const routeRecommendations = (
-    savedRecommendations.length
-      ? savedRecommendations
-      : recommendations.filter(
-          (item) => item.priority.code === "A" || item.priority.code === "B",
-        )
-  ).slice(0, ROUTE_LIMIT[timeBudget]);
-
-  const routeGroups = (() => {
-    const groups = new Map<string, Recommendation[]>();
-    for (const recommendation of routeRecommendations) {
-      const venue = recommendation.company.venue || "展馆待确认";
-      groups.set(venue, [...(groups.get(venue) ?? []), recommendation]);
-    }
-    return Array.from(groups.entries()).map(([venue, entries]) => [
-      venue,
-      entries.sort((a, b) =>
-        String(a.company.booth).localeCompare(String(b.company.booth)),
-      ),
-    ]) as Array<[string, Recommendation[]]>;
-  })();
+  const routeGroups = buildSuggestedRoute({
+    savedRecommendations,
+    recommendations,
+    timeBudget,
+  }) as Array<[string, Recommendation[]]>;
 
   /* eslint-disable react-hooks/set-state-in-effect -- local-only data is restored after hydration */
   useEffect(() => {
     try {
-      const savedProfile = window.localStorage.getItem(PROFILE_KEY);
+      const savedProfile =
+        window.localStorage.getItem(PROFILE_KEY) ??
+        window.localStorage.getItem(LEGACY_PROFILE_KEY);
       const savedList = window.localStorage.getItem(SAVED_KEY);
-      const savedRecords = window.localStorage.getItem(RECORDS_KEY);
-      const savedIgnored = window.localStorage.getItem(IGNORED_KEY);
+      const legacyList = window.localStorage.getItem(LEGACY_SAVED_KEY);
+      const savedRecords =
+        window.localStorage.getItem(RECORDS_KEY) ??
+        window.localStorage.getItem(LEGACY_RECORDS_KEY);
+      const savedIgnored =
+        window.localStorage.getItem(IGNORED_KEY) ??
+        window.localStorage.getItem(LEGACY_IGNORED_KEY);
       if (savedProfile) {
         const parsed = JSON.parse(savedProfile) as Profile;
         setDraft(cloneProfile(parsed));
         setProfile(cloneProfile(parsed));
         setGenerated(isProfileReady(parsed));
+        window.localStorage.setItem(PROFILE_KEY, JSON.stringify(parsed));
       }
-      if (savedList) setSavedIds(JSON.parse(savedList));
-      if (savedRecords) setRecords(JSON.parse(savedRecords));
-      if (savedIgnored) setIgnoredIds(JSON.parse(savedIgnored));
+      if (savedList) {
+        const parsed = JSON.parse(savedList) as SavedCompany[];
+        setSavedCompanies(
+          parsed.filter(
+            (item) =>
+              Number.isFinite(item?.companyId) &&
+              (item.source === "explore" || item.source === "recommendation"),
+          ),
+        );
+      } else if (legacyList) {
+        const migrated = (JSON.parse(legacyList) as number[]).map((companyId) => ({
+          companyId,
+          source: "recommendation" as const,
+          savedAt: new Date().toISOString(),
+        }));
+        setSavedCompanies(migrated);
+        window.localStorage.setItem(SAVED_KEY, JSON.stringify(migrated));
+      }
+      if (savedRecords) {
+        const parsed = JSON.parse(savedRecords);
+        setRecords(parsed);
+        window.localStorage.setItem(RECORDS_KEY, JSON.stringify(parsed));
+      }
+      if (savedIgnored) {
+        const parsed = JSON.parse(savedIgnored);
+        setIgnoredIds(parsed);
+        window.localStorage.setItem(IGNORED_KEY, JSON.stringify(parsed));
+      }
     } catch {
       // Ignore malformed browser data and start with a clean profile.
     }
@@ -380,6 +442,50 @@ export default function DecisionApp() {
     showToast("示例画像已填入，可直接生成");
   }
 
+  function navigateTo(mode: AppMode) {
+    setActiveMode(mode);
+    const targetId =
+      mode === "explore" ? "explore" : mode === "planned" ? "profile" : "my-list";
+    window.setTimeout(
+      () =>
+        document
+          .getElementById(targetId)
+          ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+      20,
+    );
+  }
+
+  function planForCompany(id: number) {
+    const target = companies.find((company) => company.id === id);
+    const matchingRecommendation = recommendations.find(
+      (recommendation) =>
+        target &&
+        companyName(recommendation.company.company) === companyName(target.company),
+    );
+    const nextFocusId = matchingRecommendation?.company.id ?? id;
+    setFocusCompanyId(nextFocusId);
+    setActiveMode("planned");
+    if (generated) {
+      setSelectedId(nextFocusId);
+      window.setTimeout(
+        () =>
+          document
+            .getElementById("recommendations")
+            ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+        20,
+      );
+      return;
+    }
+    window.setTimeout(
+      () =>
+        document
+          .getElementById("profile")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+      20,
+    );
+    showToast("填写画像后，将优先展示这家企业的个性化判断");
+  }
+
   function generateRecommendations() {
     if (!isProfileReady(draft)) {
       const missing = [
@@ -400,6 +506,7 @@ export default function DecisionApp() {
     setDirectionFilter("全部技术方向");
     setSearch("");
     window.localStorage.setItem(PROFILE_KEY, JSON.stringify(nextProfile));
+    if (focusCompanyId !== null) setSelectedId(focusCompanyId);
     window.setTimeout(
       () =>
         document
@@ -415,17 +522,50 @@ export default function DecisionApp() {
       showToast("这家企业已在接洽清单中");
       return;
     }
-    const next = [...savedIds, id];
-    setSavedIds(next);
+    const existing = savedCompanies.find((item) => item.companyId === id);
+    const next = existing
+      ? savedCompanies.map((item) =>
+          item.companyId === id ? { ...item, source: "recommendation" as const } : item,
+        )
+      : [
+          ...savedCompanies,
+          {
+            companyId: id,
+            source: "recommendation" as const,
+            savedAt: new Date().toISOString(),
+          },
+        ];
+    setSavedCompanies(next);
     window.localStorage.setItem(SAVED_KEY, JSON.stringify(next));
     showToast("已加入我的接洽清单");
   }
 
   function removeFromList(id: number) {
-    const next = savedIds.filter((savedId) => savedId !== id);
-    setSavedIds(next);
+    const next = savedCompanies.filter((item) => item.companyId !== id);
+    setSavedCompanies(next);
     window.localStorage.setItem(SAVED_KEY, JSON.stringify(next));
     showToast("已从接洽清单移除");
+  }
+
+  function toggleInterest(id: number) {
+    const existing = savedCompanies.find((item) => item.companyId === id);
+    if (existing?.source === "recommendation") {
+      showToast("这家企业已在接洽清单中");
+      return;
+    }
+    const next = existing
+      ? savedCompanies.filter((item) => item.companyId !== id)
+      : [
+          ...savedCompanies,
+          {
+            companyId: id,
+            source: "explore" as const,
+            savedAt: new Date().toISOString(),
+          },
+        ];
+    setSavedCompanies(next);
+    window.localStorage.setItem(SAVED_KEY, JSON.stringify(next));
+    showToast(existing ? "已取消感兴趣" : "已加入感兴趣企业");
   }
 
   function ignoreCompany(id: number) {
@@ -438,9 +578,23 @@ export default function DecisionApp() {
 
   function followUpCompany(id: number) {
     if (!savedIds.includes(id)) {
-      const nextIds = [...savedIds, id];
-      setSavedIds(nextIds);
-      window.localStorage.setItem(SAVED_KEY, JSON.stringify(nextIds));
+      const existing = savedCompanies.find((item) => item.companyId === id);
+      const nextSaved = existing
+        ? savedCompanies.map((item) =>
+            item.companyId === id
+              ? { ...item, source: "recommendation" as const }
+              : item,
+          )
+        : [
+            ...savedCompanies,
+            {
+              companyId: id,
+              source: "recommendation" as const,
+              savedAt: new Date().toISOString(),
+            },
+          ];
+      setSavedCompanies(nextSaved);
+      window.localStorage.setItem(SAVED_KEY, JSON.stringify(nextSaved));
     }
     const nextRecords = {
       ...records,
@@ -457,12 +611,24 @@ export default function DecisionApp() {
   }
 
   function moveSaved(id: number, direction: -1 | 1) {
-    const index = savedIds.indexOf(id);
-    const target = index + direction;
-    if (index < 0 || target < 0 || target >= savedIds.length) return;
-    const next = [...savedIds];
-    [next[index], next[target]] = [next[target], next[index]];
-    setSavedIds(next);
+    const contactIndex = savedIds.indexOf(id);
+    const targetContactIndex = contactIndex + direction;
+    if (
+      contactIndex < 0 ||
+      targetContactIndex < 0 ||
+      targetContactIndex >= savedIds.length
+    ) {
+      return;
+    }
+    const firstIndex = savedCompanies.findIndex((item) => item.companyId === id);
+    const targetId = savedIds[targetContactIndex];
+    const secondIndex = savedCompanies.findIndex(
+      (item) => item.companyId === targetId,
+    );
+    if (firstIndex < 0 || secondIndex < 0) return;
+    const next = [...savedCompanies];
+    [next[firstIndex], next[secondIndex]] = [next[secondIndex], next[firstIndex]];
+    setSavedCompanies(next);
     window.localStorage.setItem(SAVED_KEY, JSON.stringify(next));
   }
 
@@ -510,44 +676,35 @@ export default function DecisionApp() {
           <b>WAIC 接洽雷达</b>
         </a>
         <nav aria-label="页面导航">
-          <a href="#profile">填写需求</a>
-          <a href="#recommendations">企业推荐</a>
-          <a href="#my-list">我的清单</a>
+          <button onClick={() => navigateTo("explore")} type="button">随便逛</button>
+          <button onClick={() => navigateTo("planned")} type="button">找目标</button>
+          <button onClick={() => navigateTo("my")} type="button">我的</button>
         </nav>
         <i>无需登录 · 本地保存</i>
       </header>
 
-      <section className="decision-hero" id="top">
-        <div>
-          <p className="decision-eyebrow">WAIC 2026 · BUSINESS CONTACT DECISIONS</p>
-          <h1>
-            不是再给你一份名录，
-            <span>而是告诉你该去见谁。</span>
-          </h1>
-          <p>
-            输入身份、行业、参会目标和你能提供的资源。系统会解释双方关系、建议优先级，并给出现场直接可问的问题。
-          </p>
-          <a href="#profile">开始做接洽判断 <span>→</span></a>
-        </div>
-        <aside>
-          <small>本次可判断</small>
-          <strong>{exhibitorPayload.count}</strong>
-          <b>家 WAIC 展商</b>
-          <ul>
-            <li>不按知名度排序</li>
-            <li>每条理由显示具体依据</li>
-            <li>资料不足时不强行评分</li>
-          </ul>
-        </aside>
-      </section>
+      <Hero count={exhibitorPayload.count} onChoose={navigateTo} />
+
+      <ExploreMode
+        companies={companies}
+        ignoredIds={ignoredIds}
+        interestedIds={interestedIds}
+        onModalChange={setExploreModalOpen}
+        onPlanFor={planForCompany}
+        onToggleInterest={toggleInterest}
+      />
 
       <section className="profile-section" id="profile">
         <div className="decision-section-heading">
           <div>
-            <p className="decision-eyebrow">01 · TELL US WHAT MATTERS</p>
+            <p className="decision-eyebrow">02 · PLAN WITH A REAL PROFILE</p>
             <h2>先说你是谁，再判断谁值得见</h2>
           </div>
-          <p>必填项只需点选；可提供资源和当前问题会显著提高推荐理由的可用性。</p>
+          <p>
+            {focusCompanyId
+              ? "已保留你刚才查看的企业；完成画像后会优先展示它的个性化判断。"
+              : "必填项只需点选；可提供资源和当前问题会显著提高推荐理由的可用性。"}
+          </p>
         </div>
 
         <div className="profile-card-v2">
@@ -646,7 +803,7 @@ export default function DecisionApp() {
       >
         <div className="decision-section-heading">
           <div>
-            <p className="decision-eyebrow">02 · PRIORITIZE & VERIFY</p>
+            <p className="decision-eyebrow">03 · PRIORITIZE & VERIFY</p>
             <h2>{generated ? "你的企业推荐" : "推荐结果将在这里出现"}</h2>
           </div>
           <p>
@@ -801,16 +958,77 @@ export default function DecisionApp() {
       <section className="contact-list-section" id="my-list">
         <div className="decision-section-heading">
           <div>
-            <p className="decision-eyebrow">03 · MY CONTACT LIST</p>
-            <h2>我的接洽清单</h2>
+            <p className="decision-eyebrow">04 · MY COMPANIES</p>
+            <h2>我的企业</h2>
           </div>
-          <p>把“收藏”变成顺序、现场记录和会后动作。所有记录只保存在当前浏览器。</p>
+          <p>区分“感兴趣”和“准备接洽”，再把现场结果转成可继续跟进的行动。</p>
+        </div>
+
+        <div className="my-status-summary">
+          <article>
+            <strong>{interestedIds.length}</strong>
+            <span>感兴趣</span>
+          </article>
+          <article>
+            <strong>{savedIds.length}</strong>
+            <span>准备接洽</span>
+          </article>
+          <article>
+            <strong>
+              {Object.values(records).filter((record) => record.status === "已接洽").length}
+            </strong>
+            <span>已接洽</span>
+          </article>
+          <article>
+            <strong>
+              {Object.values(records).filter(
+                (record) => record.followUp || record.status === "会后跟进",
+              ).length}
+            </strong>
+            <span>会后跟进</span>
+          </article>
+        </div>
+
+        <div className="interest-list">
+          <div className="interest-list-head">
+            <div>
+              <span>随便逛收藏</span>
+              <b>{interestedCompanies.length} 家感兴趣企业</b>
+            </div>
+            <small>感兴趣不等于已经计划接洽，可以在这里升级状态。</small>
+          </div>
+          {interestedCompanies.length ? (
+            <div>
+              {interestedCompanies.map((company) => (
+                <article key={company.id}>
+                  <div>
+                    <span>{company.venue} · {company.booth}</span>
+                    <h3>{companyName(company.company)}</h3>
+                    <p>{company.industry} · {company.segment}</p>
+                  </div>
+                  <div>
+                    <button onClick={() => planForCompany(company.id)} type="button">
+                      判断是否适合我
+                    </button>
+                    <button onClick={() => addToList(company.id)} type="button">
+                      升级为准备接洽
+                    </button>
+                    <button onClick={() => toggleInterest(company.id)} type="button">
+                      移除
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <p className="interest-empty">在“随便逛”中点击“感兴趣”，企业会先保存在这里。</p>
+          )}
         </div>
 
         <div className="contact-list-layout">
           <div className="saved-list">
             <div className="saved-list-head">
-              <b>{savedIds.length} 家待处理企业</b>
+              <b>{savedIds.length} 家准备接洽企业</b>
               <span>用 ↑↓ 调整拜访顺序</span>
             </div>
             {savedRecommendations.length ? (
@@ -864,8 +1082,8 @@ export default function DecisionApp() {
               })
             ) : (
               <div className="empty-saved">
-                <b>还没有加入企业</b>
-                <p>在推荐卡上点击“加入接洽清单”，这里会自动形成你的现场路线。</p>
+                <b>还没有准备接洽的企业</b>
+                <p>从推荐结果加入，或把上方“感兴趣”企业升级后，这里会形成现场路线。</p>
               </div>
             )}
           </div>
@@ -933,9 +1151,11 @@ export default function DecisionApp() {
       <footer className="decision-footer">
         <div>
           <b>WAIC 接洽雷达</b>
-          <span>填写需求 → 获得推荐 → 判断是否接洽 → 加入清单 → 记录结果</span>
+          <span>随便逛：搜索与发现 · 找目标：画像、推荐、路线与跟进</span>
         </div>
-        <p>依据用户提供的 WAIC 2026 展商扫描表与论坛一览表整理。公开资料可能变化，正式接洽前请二次核验。</p>
+        <p>
+          依据用户提供的 WAIC 2026 展商扫描表与论坛一览表整理。资料不足时不强行评分；公开资料可能变化，正式接洽前请二次核验。
+        </p>
       </footer>
 
       {selectedRecommendation && (
@@ -1003,27 +1223,6 @@ export default function DecisionApp() {
               </div>
             </section>
 
-            <section className="detail-section">
-              <span>优先级判断依据</span>
-              <div className="score-basis">
-                {selectedRecommendation.priorityBasis.map((basis, index) => (
-                  <div key={basis}>
-                    <b>{["行业", "方向", "目标", "互补", "资料"][index]}</b>
-                    <p>{basis}</p>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            <section className="detail-section">
-              <span>现场验证问题</span>
-              <ol className="detail-questions">
-                {selectedRecommendation.questions.map((question) => (
-                  <li key={question}>{question}</li>
-                ))}
-              </ol>
-            </section>
-
             <section className="detail-section opening-box">
               <div>
                 <span>建议开场话术</span>
@@ -1037,6 +1236,27 @@ export default function DecisionApp() {
                 </button>
               </div>
               <p>“{selectedRecommendation.openingMessage}”</p>
+            </section>
+
+            <section className="detail-section">
+              <span>现场验证问题</span>
+              <ol className="detail-questions">
+                {selectedRecommendation.questions.map((question) => (
+                  <li key={question}>{question}</li>
+                ))}
+              </ol>
+            </section>
+
+            <section className="detail-section">
+              <span>优先级判断依据</span>
+              <div className="score-basis">
+                {selectedRecommendation.priorityBasis.map((basis, index) => (
+                  <div key={basis}>
+                    <b>{["行业", "方向", "目标", "互补", "资料"][index]}</b>
+                    <p>{basis}</p>
+                  </div>
+                ))}
+              </div>
             </section>
 
             <section className="detail-section source-facts">
@@ -1161,6 +1381,10 @@ export default function DecisionApp() {
         </div>
       )}
 
+      <BackToTop
+        hidden={Boolean(selectedRecommendation || recordingId || exploreModalOpen)}
+      />
+      <BottomNavigation active={activeMode} onNavigate={navigateTo} />
       {toast && <div className="decision-toast" role="status">{toast}</div>}
     </main>
   );

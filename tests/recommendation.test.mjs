@@ -5,6 +5,7 @@ import {
   rankCompanies,
   recommendCompany,
 } from "../app/recommendation.js";
+import exhibitorPayload from "../app/data/exhibitors.json" with { type: "json" };
 
 const base = {
   id: 1,
@@ -91,4 +92,46 @@ test("duplicate exhibitor rows are collapsed into one company", () => {
     DEMO_USER_PROFILE,
   );
   assert.equal(ranked.length, 1);
+});
+
+test("real user profiles produce different, explainable recommendations", () => {
+  const profiles = [
+    {
+      role: "创业者",
+      industries: ["制造业"],
+      goals: ["找产品或技术供应商"],
+      interests: ["工业 AI", "Agent"],
+      resources: ["客户资源", "行业场景"],
+      currentNeed: "",
+    },
+    {
+      role: "投资人",
+      industries: ["机器人"],
+      goals: ["找投资项目"],
+      interests: ["具身智能"],
+      resources: ["资金"],
+      currentNeed: "",
+    },
+    {
+      role: "渠道合作方",
+      industries: ["出海"],
+      goals: ["找生态合作伙伴"],
+      interests: ["企业服务"],
+      resources: ["海外资源"],
+      currentNeed: "",
+    },
+  ];
+  const ranked = profiles.map((profile) =>
+    rankCompanies(exhibitorPayload.exhibitors, profile).slice(0, 3),
+  );
+  assert.notDeepEqual(
+    ranked[0].map((item) => item.company.id),
+    ranked[1].map((item) => item.company.id),
+  );
+  assert.ok(ranked[0][0].matchReasons.join(" ").includes("制造业"));
+  assert.ok(ranked[0][0].relationships.includes("产品或技术供应商"));
+  assert.ok(ranked[1][0].relationships.includes("投资对象"));
+  assert.ok(ranked[1][0].questions.some((question) => /融资|收入|客户|商业/.test(question)));
+  assert.ok(ranked[2][0].relationships.includes("生态合作伙伴"));
+  assert.ok(ranked[2][0].matchReasons.join(" ").match(/出海|海外|跨境/));
 });
