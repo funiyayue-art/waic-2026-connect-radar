@@ -152,7 +152,10 @@ export function companyName(value) {
   const parts = String(value ?? "")
     .split("/")
     .map((part) => part.trim());
-  return parts.length > 1 && parts[1].length < 40 ? parts[1] : parts[0];
+  const alias = parts[1] ?? "";
+  const looksLikeFullEnglishEntity =
+    /(?:technology|technologies|company|corporation|limited|\bco\.?\b|\bltd\.?\b)/i.test(alias);
+  return alias && alias.length < 40 && !looksLikeFullEnglishEntity ? alias : parts[0];
 }
 
 export function compactText(value, length = 64) {
