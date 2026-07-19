@@ -66,8 +66,20 @@ test("ships local data and both deployment targets", async () => {
     new URL("../app/recommendation.js", import.meta.url),
     "utf8",
   );
+  const persistence = await readFile(
+    new URL("../app/workspace-persistence.js", import.meta.url),
+    "utf8",
+  );
   assert.match(decisionApp, /生成企业推荐/);
-  assert.match(decisionApp, /waic-saved-companies-v3/);
+  assert.match(decisionApp, /自动保存 · 微信返回保护/);
+  assert.match(decisionApp, /已恢复上次筛选进度/);
+  assert.match(decisionApp, /复制继续链接/);
+  assert.match(decisionApp, /pagehide/);
+  assert.match(decisionApp, /visibilitychange/);
+  assert.match(decisionApp, /recordDraft/);
+  assert.match(decisionApp, /scrollY/);
+  assert.match(persistence, /waic-workspace-snapshot-v4/);
+  assert.match(persistence, /WORKSPACE_RESUME_PREFIX/);
   assert.match(decisionApp, /ExploreMode/);
   assert.match(decisionApp, /BottomNavigation/);
   assert.match(decisionApp, /BackToTop/);
@@ -90,6 +102,7 @@ test("ships local data and both deployment targets", async () => {
   await access(new URL("../app/data/company-aliases.json", import.meta.url));
   await access(new URL("../app/data/search-synonyms.json", import.meta.url));
   await access(new URL("../app/search/searchCompanies.js", import.meta.url));
+  await access(new URL("../app/workspace-persistence.js", import.meta.url));
   await access(new URL("../.github/workflows/pages.yml", import.meta.url));
   await assert.rejects(
     access(new URL("../app/_sites-preview/SkeletonPreview.tsx", import.meta.url)),

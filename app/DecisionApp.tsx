@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import BackToTop from "./components/BackToTop";
 import BottomNavigation from "./components/BottomNavigation";
-import ExploreMode from "./components/explore/ExploreMode";
+import ExploreMode, {
+  type ExploreProgress,
+} from "./components/explore/ExploreMode";
 import Hero from "./components/Hero";
 import exhibitorPayload from "./data/exhibitors.json";
 import forumPayload from "./data/forums.json";
@@ -20,6 +22,17 @@ import {
   rankCompanies,
 } from "./recommendation";
 import { buildSuggestedRoute } from "./route-planner";
+import {
+  DEFAULT_EXPLORE_PROGRESS,
+  WORKSPACE_CLEAR_TOMBSTONE_KEY,
+  clearWorkspacePersistence,
+  createWorkspaceSnapshot,
+  getWorkspaceEpoch,
+  hasMeaningfulWorkspaceProgress,
+  loadWorkspaceSnapshot,
+  migrateLegacyWorkspace,
+  persistWorkspaceSnapshot,
+} from "./workspace-persistence";
 
 type Exhibitor = (typeof exhibitorPayload.exhibitors)[number];
 type Forum = (typeof forumPayload)[number];
@@ -47,6 +60,12 @@ type SavedCompany = {
   savedAt: string;
 };
 type AppMode = "explore" | "planned" | "my";
+type SaveProtection = "restoring" | "local" | "url" | "failed";
+type RestoreNotice = {
+  updatedAt: string;
+  source: "local" | "url" | "legacy";
+  scrollY: number;
+};
 type Recommendation = {
   company: Exhibitor;
   priority: {
@@ -64,15 +83,14 @@ type Recommendation = {
   openingMessage: string;
 };
 
+function saveProtectionFor(
+  result: ReturnType<typeof persistWorkspaceSnapshot>,
+): SaveProtection | null {
+  if (result.blocked) return null;
+  return result.savedLocally ? "local" : result.savedInUrl ? "url" : "failed";
+}
+
 const TIME_BUDGETS: TimeBudget[] = ["30分钟", "2小时", "半天", "全天"];
-const PROFILE_KEY = "waic-decision-profile-v3";
-const SAVED_KEY = "waic-saved-companies-v3";
-const RECORDS_KEY = "waic-contact-records-v3";
-const IGNORED_KEY = "waic-ignored-companies-v3";
-const LEGACY_PROFILE_KEY = "waic-decision-profile-v2";
-const LEGACY_SAVED_KEY = "waic-contact-list-v2";
-const LEGACY_RECORDS_KEY = "waic-contact-records-v2";
-const LEGACY_IGNORED_KEY = "waic-ignored-companies-v2";
 
 function cloneProfile(profile: Profile): Profile {
   return {
@@ -82,6 +100,27 @@ function cloneProfile(profile: Profile): Profile {
     interests: [...profile.interests],
     resources: [...profile.resources],
   };
+}
+
+function cloneExploreProgress(
+  progress = DEFAULT_EXPLORE_PROGRESS as ExploreProgress,
+): ExploreProgress {
+  return {
+    ...progress,
+    historyIds: [...progress.historyIds],
+    recentSearches: [...progress.recentSearches],
+  };
+}
+
+function formatRestoreTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "刚刚";
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function isProfileReady(profile: Profile) {
@@ -219,7 +258,6 @@ function FieldChips({
 export default function DecisionApp() {
   const companies = exhibitorPayload.exhibitors as Exhibitor[];
   const [activeMode, setActiveMode] = useState<AppMode>("explore");
-  const [exploreModalOpen, setExploreModalOpen] = useState(false);
   const [draft, setDraft] = useState<Profile>(
     cloneProfile(EMPTY_USER_PROFILE as Profile),
   );
@@ -244,7 +282,20 @@ export default function DecisionApp() {
   const [recordNote, setRecordNote] = useState("");
   const [recordFollowUp, setRecordFollowUp] = useState(false);
   const [timeBudget, setTimeBudget] = useState<TimeBudget>("2小时");
+  const [exploreProgress, setExploreProgress] = useState<ExploreProgress>(() =>
+    cloneExploreProgress(),
+  );
+  const [persistenceReady, setPersistenceReady] = useState(false);
+  const [restoreNotice, setRestoreNotice] = useState<RestoreNotice | null>(null);
+  const [resumeScrollY, setResumeScrollY] = useState(0);
+  const [workspaceEpoch, setWorkspaceEpoch] = useState("");
+  const [saveProtection, setSaveProtection] =
+    useState<SaveProtection>("restoring");
   const [toast, setToast] = useState("");
+  const workspaceSnapshotRef = useRef<ReturnType<
+    typeof createWorkspaceSnapshot
+  > | null>(null);
+  const exploreModalOpen = exploreProgress.detailId !== null;
 
   const interestedIds = savedCompanies
     .filter((item) => item.source === "explore")
@@ -352,67 +403,254 @@ export default function DecisionApp() {
     timeBudget,
   }) as Array<[string, Recommendation[]]>;
 
+  const workspaceSnapshot = useMemo(
+    () =>
+      createWorkspaceSnapshot({
+        epoch: workspaceEpoch,
+        activeMode,
+        draft,
+        profile,
+        generated,
+        recommendation: {
+          search,
+          priorityFilter,
+          categoryFilter,
+          directionFilter,
+        },
+        explore: exploreProgress,
+        savedCompanies,
+        ignoredIds,
+        focusCompanyId,
+        selectedCompanyId: selectedId,
+        records,
+        recordDraft: {
+          recordingId,
+          status: recordStatus,
+          note: recordNote,
+          followUp: recordFollowUp,
+        },
+        timeBudget,
+        scrollY: resumeScrollY,
+      }),
+    [
+      activeMode,
+      categoryFilter,
+      directionFilter,
+      draft,
+      exploreProgress,
+      focusCompanyId,
+      generated,
+      ignoredIds,
+      priorityFilter,
+      profile,
+      recordingId,
+      recordFollowUp,
+      recordNote,
+      recordStatus,
+      records,
+      resumeScrollY,
+      savedCompanies,
+      search,
+      selectedId,
+      timeBudget,
+      workspaceEpoch,
+    ],
+  );
+
+  useLayoutEffect(() => {
+    workspaceSnapshotRef.current = workspaceSnapshot;
+  }, [workspaceSnapshot]);
+
   /* eslint-disable react-hooks/set-state-in-effect -- local-only data is restored after hydration */
   useEffect(() => {
-    try {
-      const savedProfile =
-        window.localStorage.getItem(PROFILE_KEY) ??
-        window.localStorage.getItem(LEGACY_PROFILE_KEY);
-      const savedList = window.localStorage.getItem(SAVED_KEY);
-      const legacyList = window.localStorage.getItem(LEGACY_SAVED_KEY);
-      const savedRecords =
-        window.localStorage.getItem(RECORDS_KEY) ??
-        window.localStorage.getItem(LEGACY_RECORDS_KEY);
-      const savedIgnored =
-        window.localStorage.getItem(IGNORED_KEY) ??
-        window.localStorage.getItem(LEGACY_IGNORED_KEY);
-      if (savedProfile) {
-        const parsed = JSON.parse(savedProfile) as Profile;
-        setDraft(cloneProfile(parsed));
-        setProfile(cloneProfile(parsed));
-        setGenerated(isProfileReady(parsed));
-        window.localStorage.setItem(PROFILE_KEY, JSON.stringify(parsed));
+    const currentEpoch = getWorkspaceEpoch(window.localStorage);
+    setWorkspaceEpoch(currentEpoch);
+    const loaded = loadWorkspaceSnapshot(
+      window.localStorage,
+      window.location.hash,
+    );
+    const legacy = loaded ? null : migrateLegacyWorkspace(window.localStorage);
+    const restored = loaded ?? (legacy ? { snapshot: legacy, source: "legacy" } : null);
+
+    if (restored?.snapshot) {
+      const snapshot = restored.snapshot;
+      const validCompanyIds = new Set(companies.map((company) => company.id));
+      const explore = cloneExploreProgress(snapshot.explore as ExploreProgress);
+      explore.historyIds = explore.historyIds.filter((id) =>
+        validCompanyIds.has(id),
+      );
+      explore.detailId =
+        explore.detailId && validCompanyIds.has(explore.detailId)
+          ? explore.detailId
+          : null;
+      const savedCompanies = (snapshot.savedCompanies as SavedCompany[]).filter(
+        (item) => validCompanyIds.has(item.companyId),
+      );
+      const ignoredIds = snapshot.ignoredIds.filter((id) =>
+        validCompanyIds.has(id),
+      );
+      const records = Object.fromEntries(
+        Object.entries(snapshot.records).filter(([companyId]) =>
+          validCompanyIds.has(Number(companyId)),
+        ),
+      ) as Record<number, ContactRecord>;
+      const recordDraft = {
+        ...snapshot.recordDraft,
+        recordingId:
+          snapshot.recordDraft.recordingId &&
+          validCompanyIds.has(snapshot.recordDraft.recordingId)
+            ? snapshot.recordDraft.recordingId
+            : null,
+      };
+      const sanitizedSnapshot =
+        createWorkspaceSnapshot(
+          {
+            ...snapshot,
+            explore,
+            savedCompanies,
+            ignoredIds,
+            focusCompanyId:
+              snapshot.focusCompanyId &&
+              validCompanyIds.has(snapshot.focusCompanyId)
+                ? snapshot.focusCompanyId
+                : null,
+            selectedCompanyId:
+              snapshot.selectedCompanyId &&
+              validCompanyIds.has(snapshot.selectedCompanyId)
+                ? snapshot.selectedCompanyId
+                : null,
+            records,
+            recordDraft,
+          },
+          snapshot.updatedAt,
+        ) ?? snapshot;
+      setActiveMode(sanitizedSnapshot.activeMode as AppMode);
+      setDraft(cloneProfile(sanitizedSnapshot.draft as Profile));
+      setProfile(cloneProfile(sanitizedSnapshot.profile as Profile));
+      setGenerated(Boolean(sanitizedSnapshot.generated));
+      setSearch(sanitizedSnapshot.recommendation.search);
+      setPriorityFilter(
+        sanitizedSnapshot.recommendation.priorityFilter as PriorityFilter,
+      );
+      setCategoryFilter(sanitizedSnapshot.recommendation.categoryFilter);
+      setDirectionFilter(sanitizedSnapshot.recommendation.directionFilter);
+      setExploreProgress(
+        cloneExploreProgress(sanitizedSnapshot.explore as ExploreProgress),
+      );
+      setSavedCompanies(sanitizedSnapshot.savedCompanies as SavedCompany[]);
+      setIgnoredIds(sanitizedSnapshot.ignoredIds);
+      setFocusCompanyId(sanitizedSnapshot.focusCompanyId);
+      setSelectedId(sanitizedSnapshot.selectedCompanyId);
+      setRecords(sanitizedSnapshot.records as Record<number, ContactRecord>);
+      setRecordingId(sanitizedSnapshot.recordDraft.recordingId);
+      setRecordStatus(
+        sanitizedSnapshot.recordDraft.status as ContactStatus,
+      );
+      setRecordNote(sanitizedSnapshot.recordDraft.note);
+      setRecordFollowUp(sanitizedSnapshot.recordDraft.followUp);
+      setTimeBudget(sanitizedSnapshot.timeBudget as TimeBudget);
+      setResumeScrollY(sanitizedSnapshot.scrollY);
+      if (hasMeaningfulWorkspaceProgress(sanitizedSnapshot)) {
+        setRestoreNotice({
+          updatedAt: sanitizedSnapshot.updatedAt,
+          source: restored.source as RestoreNotice["source"],
+          scrollY: sanitizedSnapshot.scrollY,
+        });
       }
-      if (savedList) {
-        const parsed = JSON.parse(savedList) as SavedCompany[];
-        setSavedCompanies(
-          parsed.filter(
-            (item) =>
-              Number.isFinite(item?.companyId) &&
-              (item.source === "explore" || item.source === "recommendation"),
-          ),
-        );
-      } else if (legacyList) {
-        const migrated = (JSON.parse(legacyList) as number[]).map((companyId) => ({
-          companyId,
-          source: "recommendation" as const,
-          savedAt: new Date().toISOString(),
-        }));
-        setSavedCompanies(migrated);
-        window.localStorage.setItem(SAVED_KEY, JSON.stringify(migrated));
-      }
-      if (savedRecords) {
-        const parsed = JSON.parse(savedRecords);
-        setRecords(parsed);
-        window.localStorage.setItem(RECORDS_KEY, JSON.stringify(parsed));
-      }
-      if (savedIgnored) {
-        const parsed = JSON.parse(savedIgnored);
-        setIgnoredIds(parsed);
-        window.localStorage.setItem(IGNORED_KEY, JSON.stringify(parsed));
-      }
-    } catch {
-      // Ignore malformed browser data and start with a clean profile.
+      const protection = saveProtectionFor(persistWorkspaceSnapshot(
+        window.localStorage,
+        window.history,
+        window.location,
+        sanitizedSnapshot,
+      ));
+      if (protection) setSaveProtection(protection);
     }
+    setPersistenceReady(true);
+  }, [companies]);
+
+  useEffect(() => {
+    if (!persistenceReady || !workspaceSnapshot) return;
+    const timer = window.setTimeout(
+      () => {
+        const currentSnapshot =
+          createWorkspaceSnapshot({
+            ...workspaceSnapshot,
+            scrollY:
+              workspaceSnapshot.scrollY > 0 && window.scrollY === 0
+                ? workspaceSnapshot.scrollY
+                : window.scrollY,
+          }, workspaceSnapshot.updatedAt) ?? workspaceSnapshot;
+        const protection = saveProtectionFor(persistWorkspaceSnapshot(
+          window.localStorage,
+          window.history,
+          window.location,
+          currentSnapshot,
+        ));
+        if (protection) setSaveProtection(protection);
+      },
+      180,
+    );
+    return () => window.clearTimeout(timer);
+  }, [persistenceReady, workspaceSnapshot]);
+
+  useEffect(() => {
+    if (!persistenceReady) return;
+    const flushProgress = () => {
+      if (!workspaceSnapshotRef.current) return;
+      const currentSnapshot =
+        createWorkspaceSnapshot({
+          ...workspaceSnapshotRef.current,
+          scrollY:
+            workspaceSnapshotRef.current.scrollY > 0 && window.scrollY === 0
+              ? workspaceSnapshotRef.current.scrollY
+              : window.scrollY,
+        }, workspaceSnapshotRef.current.updatedAt) ??
+        workspaceSnapshotRef.current;
+      persistWorkspaceSnapshot(
+        window.localStorage,
+        window.history,
+        window.location,
+        currentSnapshot,
+      );
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") flushProgress();
+    };
+    window.addEventListener("pagehide", flushProgress);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    document.addEventListener("freeze", flushProgress);
+    return () => {
+      window.removeEventListener("pagehide", flushProgress);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      document.removeEventListener("freeze", flushProgress);
+    };
+  }, [persistenceReady]);
+
+  useEffect(() => {
+    const handleExternalClear = (event: StorageEvent) => {
+      if (
+        event.key !== WORKSPACE_CLEAR_TOMBSTONE_KEY ||
+        !event.newValue
+      ) {
+        return;
+      }
+      workspaceSnapshotRef.current = null;
+      window.location.reload();
+    };
+    window.addEventListener("storage", handleExternalClear);
+    return () => window.removeEventListener("storage", handleExternalClear);
   }, []);
 
   useEffect(() => {
-    if (!recordingId) return;
-    const record = records[recordingId];
-    setRecordStatus(record?.status ?? "准备接洽");
-    setRecordNote(record?.note ?? "");
-    setRecordFollowUp(record?.followUp ?? false);
-  }, [recordingId, records]);
+    if (!persistenceReady || resumeScrollY <= 0) return;
+    const handleScroll = () => setResumeScrollY(0);
+    window.addEventListener("scroll", handleScroll, {
+      once: true,
+      passive: true,
+    });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, [persistenceReady, resumeScrollY]);
+
   /* eslint-enable react-hooks/set-state-in-effect */
 
   function showToast(message: string) {
@@ -505,7 +743,6 @@ export default function DecisionApp() {
     setCategoryFilter("全部展商类别");
     setDirectionFilter("全部技术方向");
     setSearch("");
-    window.localStorage.setItem(PROFILE_KEY, JSON.stringify(nextProfile));
     if (focusCompanyId !== null) setSelectedId(focusCompanyId);
     window.setTimeout(
       () =>
@@ -536,14 +773,12 @@ export default function DecisionApp() {
           },
         ];
     setSavedCompanies(next);
-    window.localStorage.setItem(SAVED_KEY, JSON.stringify(next));
     showToast("已加入我的接洽清单");
   }
 
   function removeFromList(id: number) {
     const next = savedCompanies.filter((item) => item.companyId !== id);
     setSavedCompanies(next);
-    window.localStorage.setItem(SAVED_KEY, JSON.stringify(next));
     showToast("已从接洽清单移除");
   }
 
@@ -564,14 +799,12 @@ export default function DecisionApp() {
           },
         ];
     setSavedCompanies(next);
-    window.localStorage.setItem(SAVED_KEY, JSON.stringify(next));
     showToast(existing ? "已取消感兴趣" : "已加入感兴趣企业");
   }
 
   function ignoreCompany(id: number) {
     const next = ignoredIds.includes(id) ? ignoredIds : [...ignoredIds, id];
     setIgnoredIds(next);
-    window.localStorage.setItem(IGNORED_KEY, JSON.stringify(next));
     setSelectedId(null);
     showToast("已标记为不感兴趣");
   }
@@ -594,7 +827,6 @@ export default function DecisionApp() {
             },
           ];
       setSavedCompanies(nextSaved);
-      window.localStorage.setItem(SAVED_KEY, JSON.stringify(nextSaved));
     }
     const nextRecords = {
       ...records,
@@ -606,7 +838,6 @@ export default function DecisionApp() {
       },
     };
     setRecords(nextRecords);
-    window.localStorage.setItem(RECORDS_KEY, JSON.stringify(nextRecords));
     showToast("已标记为会后跟进");
   }
 
@@ -629,12 +860,22 @@ export default function DecisionApp() {
     const next = [...savedCompanies];
     [next[firstIndex], next[secondIndex]] = [next[secondIndex], next[firstIndex]];
     setSavedCompanies(next);
-    window.localStorage.setItem(SAVED_KEY, JSON.stringify(next));
   }
 
   function openRecord(id: number) {
     if (!savedIds.includes(id)) addToList(id);
+    const record = records[id];
+    setRecordStatus(record?.status ?? "准备接洽");
+    setRecordNote(record?.note ?? "");
+    setRecordFollowUp(record?.followUp ?? false);
     setRecordingId(id);
+  }
+
+  function closeRecord() {
+    setRecordingId(null);
+    setRecordStatus("准备接洽");
+    setRecordNote("");
+    setRecordFollowUp(false);
   }
 
   function saveRecord() {
@@ -649,8 +890,7 @@ export default function DecisionApp() {
       },
     };
     setRecords(nextRecords);
-    window.localStorage.setItem(RECORDS_KEY, JSON.stringify(nextRecords));
-    setRecordingId(null);
+    closeRecord();
     showToast("现场沟通结果已保存");
   }
 
@@ -668,10 +908,160 @@ export default function DecisionApp() {
     showToast("开场话术已复制");
   }
 
+  function continueRestoredProgress() {
+    const restoredScrollY = restoreNotice?.scrollY ?? 0;
+    setRestoreNotice(null);
+    if (restoredScrollY > 0) {
+      setResumeScrollY(0);
+      window.setTimeout(() => {
+        const maximumScroll = Math.max(
+          0,
+          document.documentElement.scrollHeight - window.innerHeight,
+        );
+        window.scrollTo({
+          top: Math.min(restoredScrollY, maximumScroll),
+          behavior: "smooth",
+        });
+      }, 20);
+      return;
+    }
+    const targetId =
+      activeMode === "explore"
+        ? "explore"
+        : activeMode === "my"
+          ? "my-list"
+          : generated
+            ? "recommendations"
+            : "profile";
+    window.setTimeout(
+      () =>
+        document
+          .getElementById(targetId)
+          ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+      20,
+    );
+  }
+
+  function resetWorkspaceProgress() {
+    if (
+      !window.confirm(
+        "确定清空本机筛选进度吗？感兴趣企业、接洽清单和现场备注都会删除。",
+      )
+    ) {
+      return;
+    }
+    const clearResult = clearWorkspacePersistence(
+      window.localStorage,
+      window.history,
+      window.location,
+    );
+    setWorkspaceEpoch(clearResult.epoch);
+    setSaveProtection(
+      clearResult.localProtected
+        ? "local"
+        : clearResult.urlCleared
+          ? "url"
+          : "failed",
+    );
+    workspaceSnapshotRef.current = null;
+    setActiveMode("explore");
+    setDraft(cloneProfile(EMPTY_USER_PROFILE as Profile));
+    setProfile(cloneProfile(EMPTY_USER_PROFILE as Profile));
+    setGenerated(false);
+    setFormError("");
+    setSelectedId(null);
+    setSearch("");
+    setPriorityFilter("全部优先级");
+    setCategoryFilter("全部展商类别");
+    setDirectionFilter("全部技术方向");
+    setSavedCompanies([]);
+    setIgnoredIds([]);
+    setFocusCompanyId(null);
+    setRecords({});
+    setRecordingId(null);
+    setRecordStatus("准备接洽");
+    setRecordNote("");
+    setRecordFollowUp(false);
+    setTimeBudget("2小时");
+    setExploreProgress(cloneExploreProgress());
+    setRestoreNotice(null);
+    setResumeScrollY(0);
+    window.setTimeout(
+      () =>
+        document
+          .getElementById("top")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+      20,
+    );
+    if (clearResult.localProtected && clearResult.urlCleared) {
+      showToast("本机筛选进度已清空");
+    } else if (clearResult.localProtected) {
+      showToast("本机已清空；地址备份未清除，请关闭页面");
+    } else if (clearResult.urlCleared) {
+      showToast("地址已清理；本机存储未清空，请勿刷新");
+    } else {
+      showToast("浏览器未能彻底清空，请关闭页面后重新打开");
+    }
+  }
+
+  async function copyResumeLink() {
+    const snapshot = workspaceSnapshotRef.current ?? workspaceSnapshot;
+    let resumeLinkReady = true;
+    if (snapshot) {
+      const currentSnapshot =
+        createWorkspaceSnapshot({
+          ...snapshot,
+          scrollY:
+            snapshot.scrollY > 0 && window.scrollY === 0
+              ? snapshot.scrollY
+              : window.scrollY,
+        }, snapshot.updatedAt) ?? snapshot;
+      const persistResult = persistWorkspaceSnapshot(
+        window.localStorage,
+        window.history,
+        window.location,
+        currentSnapshot,
+      );
+      const protection = saveProtectionFor(persistResult);
+      if (protection) setSaveProtection(protection);
+      resumeLinkReady =
+        !hasMeaningfulWorkspaceProgress(currentSnapshot) ||
+        persistResult.savedInUrl;
+    }
+    if (!resumeLinkReady) {
+      showToast("当前浏览器未能生成继续链接");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = window.location.href;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      textarea.remove();
+    }
+    showToast("继续链接已复制，不包含现场备注");
+  }
+
+  function scrollToTop() {
+    document
+      .getElementById("top")
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   return (
     <main className="decision-app">
       <header className="decision-topbar">
-        <a className="decision-brand" href="#top">
+        <a
+          className="decision-brand"
+          href="#top"
+          onClick={(event) => {
+            event.preventDefault();
+            scrollToTop();
+          }}
+        >
           <span>W</span>
           <b>WAIC 接洽雷达</b>
         </a>
@@ -680,18 +1070,56 @@ export default function DecisionApp() {
           <button onClick={() => navigateTo("planned")} type="button">找目标</button>
           <button onClick={() => navigateTo("my")} type="button">我的</button>
         </nav>
-        <i>无需登录 · 本地保存</i>
+        <i>
+          {saveProtection === "local"
+            ? "自动保存 · 微信返回保护"
+            : saveProtection === "url"
+              ? "链接保护 · 本机存储受限"
+              : saveProtection === "failed"
+                ? "保存受限 · 请勿关闭页面"
+                : "正在恢复本机进度…"}
+        </i>
       </header>
 
       <Hero count={exhibitorPayload.count} onChoose={navigateTo} />
+
+      {restoreNotice && (
+        <section aria-live="polite" className="restore-notice" role="status">
+          <span aria-hidden="true">↺</span>
+          <div>
+            <b>
+              {restoreNotice.source === "url"
+                ? "已从继续链接恢复"
+                : "已恢复上次筛选进度"}
+            </b>
+            <p>
+              {interestedIds.length || savedIds.length
+                ? `${interestedIds.length} 家感兴趣 · ${savedIds.length} 家准备接洽`
+                : "筛选条件与当前企业已恢复"}
+              <small>保存于 {formatRestoreTime(restoreNotice.updatedAt)}</small>
+            </p>
+          </div>
+          <div className="restore-notice-actions">
+            <button onClick={continueRestoredProgress} type="button">
+              继续上次筛选
+            </button>
+            <button onClick={resetWorkspaceProgress} type="button">
+              重新开始
+            </button>
+          </div>
+        </section>
+      )}
 
       <ExploreMode
         companies={companies}
         ignoredIds={ignoredIds}
         interestedIds={interestedIds}
-        onModalChange={setExploreModalOpen}
         onPlanFor={planForCompany}
+        onProgressChange={(patch) =>
+          setExploreProgress((current) => ({ ...current, ...patch }))
+        }
         onToggleInterest={toggleInterest}
+        progress={exploreProgress}
       />
 
       <section className="profile-section" id="profile">
@@ -1156,6 +1584,15 @@ export default function DecisionApp() {
         <p>
           依据用户提供的 WAIC 2026 展商扫描表与论坛一览表整理。资料不足时不强行评分；公开资料可能变化，正式接洽前请二次核验。
         </p>
+        <div className="persistence-controls">
+          <span>进度自动保存在本机；继续链接不包含现场备注。</span>
+          <button onClick={copyResumeLink} type="button">
+            复制继续链接
+          </button>
+          <button onClick={resetWorkspaceProgress} type="button">
+            清空本机进度
+          </button>
+        </div>
       </footer>
 
       {selectedRecommendation && (
@@ -1318,7 +1755,7 @@ export default function DecisionApp() {
       {recordingId && (
         <div
           className="record-backdrop"
-          onClick={() => setRecordingId(null)}
+          onClick={closeRecord}
           role="presentation"
         >
           <section
@@ -1335,7 +1772,7 @@ export default function DecisionApp() {
               </h2>
               <button
                 aria-label="关闭现场记录"
-                onClick={() => setRecordingId(null)}
+                onClick={closeRecord}
                 type="button"
               >
                 ×
@@ -1361,6 +1798,7 @@ export default function DecisionApp() {
             <label>
               <span>沟通内容与关键判断</span>
               <textarea
+                maxLength={2000}
                 onChange={(event) => setRecordNote(event.target.value)}
                 placeholder="例如：产品支持私有化，已约下周 Demo；需核验制造客户案例与实施周期。"
                 value={recordNote}
