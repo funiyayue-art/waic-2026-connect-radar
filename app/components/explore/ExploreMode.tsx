@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useMemo, useRef } from "react";
 import {
   EXPLORE_CATEGORIES,
   exploreDirections,
@@ -34,6 +34,17 @@ type SearchResult = {
   matchValues: string[];
 };
 
+export type ExploreProgress = {
+  input: string;
+  query: string;
+  categoryId: string;
+  batchSeed: number;
+  historyIds: number[];
+  recentSearches: string[];
+  visibleLimit: number;
+  detailId: number | null;
+};
+
 const buildIndex = buildCompanyIndex as unknown as (
   companies: Company[],
 ) => unknown[];
@@ -56,62 +67,36 @@ const runSearch = searchCompanies as unknown as (
   options: { allowedIds?: Set<number>; limit?: number },
 ) => SearchResult[];
 
-const RECENT_SEARCH_KEY = "waic-recent-searches-v1";
-const EXPLORE_HISTORY_KEY = "waic-explore-history-v1";
 const QUICK_TERMS = ["具身智能", "工业 Agent", "AI 医疗", "芯片", "企业服务"];
-
-function restoreStringArray(key: string) {
-  if (typeof window === "undefined") return [];
-  try {
-    const value = JSON.parse(window.localStorage.getItem(key) ?? "[]");
-    return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
-function restoreNumberArray(key: string) {
-  if (typeof window === "undefined") return [];
-  try {
-    const value = JSON.parse(window.localStorage.getItem(key) ?? "[]");
-    return Array.isArray(value) ? value.filter((item) => Number.isFinite(item)) : [];
-  } catch {
-    return [];
-  }
-}
 
 export default function ExploreMode({
   companies,
   ignoredIds,
   interestedIds,
-  onModalChange,
   onPlanFor,
+  onProgressChange,
   onToggleInterest,
+  progress,
 }: {
   companies: Company[];
   ignoredIds: number[];
   interestedIds: number[];
-  onModalChange?: (open: boolean) => void;
   onPlanFor: (id: number) => void;
+  onProgressChange: (patch: Partial<ExploreProgress>) => void;
   onToggleInterest: (id: number) => void;
+  progress: ExploreProgress;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [input, setInput] = useState("");
-  const [query, setQuery] = useState("");
-  const [categoryId, setCategoryId] = useState("all");
-  const [batchSeed, setBatchSeed] = useState(1);
-  const [historyIds, setHistoryIds] = useState<number[]>([]);
-  const [recentSearches, setRecentSearches] = useState<string[]>([]);
-  const [visibleLimit, setVisibleLimit] = useState(30);
-  const [detailId, setDetailId] = useState<number | null>(null);
-
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
-      setHistoryIds(restoreNumberArray(EXPLORE_HISTORY_KEY));
-      setRecentSearches(restoreStringArray(RECENT_SEARCH_KEY));
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, []);
+  const {
+    input,
+    query,
+    categoryId,
+    batchSeed,
+    historyIds,
+    recentSearches,
+    visibleLimit,
+    detailId,
+  } = progress;
 
   const searchIndex = useMemo(() => buildIndex(companies), [companies]);
   const categoryCompanies = useMemo(
@@ -151,29 +136,23 @@ export default function ExploreMode({
       0,
       6,
     );
-    setRecentSearches(next);
-    window.localStorage.setItem(RECENT_SEARCH_KEY, JSON.stringify(next));
+    onProgressChange({ recentSearches: next });
   }
 
   function submitSearch(event?: FormEvent) {
     event?.preventDefault();
     const next = input.trim();
-    setQuery(next);
-    setVisibleLimit(30);
+    onProgressChange({ query: next, visibleLimit: 30 });
     if (next) saveRecentSearch(next);
   }
 
   function runQuickTerm(term: string) {
-    setInput(term);
-    setQuery(term);
-    setVisibleLimit(30);
+    onProgressChange({ input: term, query: term, visibleLimit: 30 });
     saveRecentSearch(term);
   }
 
   function clearSearch() {
-    setInput("");
-    setQuery("");
-    setVisibleLimit(30);
+    onProgressChange({ input: "", query: "", visibleLimit: 30 });
     window.setTimeout(() => inputRef.current?.focus(), 0);
   }
 
@@ -181,19 +160,18 @@ export default function ExploreMode({
     const nextHistory = Array.from(
       new Set([...historyIds, ...randomCompanies.map((company) => company.id)]),
     ).slice(-80);
-    setHistoryIds(nextHistory);
-    window.localStorage.setItem(EXPLORE_HISTORY_KEY, JSON.stringify(nextHistory));
-    setBatchSeed((seed) => seed + 1);
+    onProgressChange({
+      historyIds: nextHistory,
+      batchSeed: batchSeed + 1,
+    });
   }
 
   function openDetail(id: number) {
-    setDetailId(id);
-    onModalChange?.(true);
+    onProgressChange({ detailId: id });
   }
 
   function closeDetail() {
-    setDetailId(null);
-    onModalChange?.(false);
+    onProgressChange({ detailId: null });
   }
 
   const visibleResults = searchResults.slice(0, visibleLimit);
@@ -217,10 +195,9 @@ export default function ExploreMode({
                 aria-label="搜索全部展商"
                 onChange={(event) => {
                   const nextValue = event.target.value;
-                  setInput(nextValue);
+                  onProgressChange({ input: nextValue });
                   if (!nextValue) {
-                    setQuery("");
-                    setVisibleLimit(30);
+                    onProgressChange({ query: "", visibleLimit: 30 });
                   }
                 }}
                 placeholder="例如：工业 AI、零一、H1-C120"
@@ -254,9 +231,11 @@ export default function ExploreMode({
                 className={categoryId === category.id ? "active" : ""}
                 key={category.id}
                 onClick={() => {
-                  setCategoryId(category.id);
-                  setVisibleLimit(30);
-                  setBatchSeed((seed) => seed + 1);
+                  onProgressChange({
+                    categoryId: category.id,
+                    visibleLimit: 30,
+                    batchSeed: batchSeed + 1,
+                  });
                 }}
                 type="button"
               >
@@ -335,7 +314,11 @@ export default function ExploreMode({
           {query && visibleLimit < searchResults.length && (
             <button
               className="explore-load-more"
-              onClick={() => setVisibleLimit((limit) => limit + 30)}
+              onClick={() =>
+                onProgressChange({
+                  visibleLimit: Math.min(visibleLimit + 30, 300),
+                })
+              }
               type="button"
             >
               再看 30 家
